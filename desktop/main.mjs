@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { readFile, stat } from 'node:fs/promises';
 import { clearToken, credentialStatus, history, home, Problem, saveSettings, savedToken, saveToken, settings } from '../core/state.mjs';
 import { channelId, source } from '../core/source.mjs';
-import { preview, runExport } from '../core/export.mjs';
+import { prepareExport, preview, runExport, runJob } from '../core/export.mjs';
+import { jobStatus, launchJob, listJobs, pauseJob } from '../core/jobs.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const root = join(here, '..');
@@ -15,7 +16,7 @@ if (qa && (!qaOutput || !isAbsolute(qaOutput) || home !== resolve(qaOutput, 'sta
   app.exit(2);
 }
 app.setPath('userData', join(home, 'desktop'));
-let win, active;
+let win;
 const action = {
   init: async () => ({ settings: await settings(), credential: await credentialStatus(), home, root }),
   status: credentialStatus,
@@ -25,7 +26,9 @@ const action = {
   revealToken: savedToken,
   check: async () => (await source('discord')).identity(),
   guilds: async mode => (await source(mode)).guilds(),
-  channels: async ({ mode, id }) => (await source(mode)).channels(id),
+  channels: async ({ mode, id, archived, generation }) => (await source(mode)).catalog(id, { archived, progress: data => {
+    if (win && !win.isDestroyed()) win.webContents.send('archive:progress', { ...data, generation });
+  } }),
   channel: async ({ mode, id }) => (await source(mode)).channel(channelId(id)),
   preview: async ({ mode, id }) => preview(mode, id),
   history,
@@ -43,23 +46,19 @@ const action = {
     if (error) throw new Problem('OPEN_FAILED', 'Could not open this export folder.');
   },
   export: async input => {
-    if (active) throw new Problem('BUSY', 'An export is running.');
-    active = new AbortController();
-    try {
-      return await runExport(input, await settings(), {
-        signal: active.signal,
-        progress: data => { if (win && !win.isDestroyed()) win.webContents.send('archive:progress', data); },
-      });
-    } finally { active = undefined; }
+    const job = await prepareExport(input, await settings());
+    return await launchJob(job.id);
   },
-  cancel: () => { active?.abort(); },
+  jobs: listJobs,
+  job: jobStatus,
+  pause: pauseJob,
+  resume: launchJob,
 };
 
 if (!qa && !app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { win?.show(); win?.focus(); });
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => active?.abort());
   app.whenReady().then(async () => {
     const iconPath = join(root, 'icon.svg');
     const icon = nativeImage.createFromPath(join(root, 'icon.png'));
@@ -79,11 +78,6 @@ else {
           message: error.name === 'AbortError' ? 'Export canceled.' : error.message } };
       }
     });
-    win.on('close', event => {
-      if (!active) return;
-      event.preventDefault();
-      active.abort();
-    });
     await win.loadFile(join(here, 'index.html'));
     if (qa) {
       try {
@@ -97,23 +91,58 @@ else {
           await win.capturePage();
           await writeFile(join(destination, name + '.png'), (await win.capturePage()).toPNG());
         }
-        await win.webContents.executeJavaScript("document.querySelector('#tab-export').click()");
+        await win.webContents.executeJavaScript("document.querySelector('#tab-export').click(); document.querySelector('.json-details').scrollIntoView({block:'center'}); new Promise(r=>setTimeout(r,300))");
+        await win.capturePage();
+        await writeFile(join(destination, 'details.png'), (await win.capturePage()).toPNG());
+        await win.webContents.executeJavaScript("window.scrollTo(0,0); document.querySelector('#show-message-preview').click(); new Promise(r=>setTimeout(r,400))");
+        await win.capturePage();
+        await writeFile(join(destination, 'preview.png'), (await win.capturePage()).toPNG());
+        await win.webContents.executeJavaScript("document.querySelector('#preview-panel button').click(); document.querySelector('.json-details').open=false; window.scrollTo(0,0)");
         win.setContentSize(900, 760);
         await win.webContents.executeJavaScript('new Promise(r=>setTimeout(r,300))');
         const horizontalOverflow = await win.webContents.executeJavaScript('document.documentElement.scrollWidth > innerWidth');
         if (horizontalOverflow) throw new Error('Compact layout has horizontal overflow.');
         await writeFile(join(destination, 'compact.png'), (await win.capturePage()).toPNG());
         const archive = await runExport({ mode: 'demo', channels: ['1200000000000000010'],
-          format: 'html', output: join(destination, 'sample-output') }, await settings());
+          format: 'html', attachments: true, output: join(destination, 'sample-output') }, await settings());
         const reader = new BrowserWindow({ width: 880, height: 740, show: false,
           webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
         try {
           await reader.loadFile(join(archive.output, archive.channels[0].file));
           const messages = await reader.webContents.executeJavaScript('document.querySelectorAll("article").length');
           if (messages !== 4) throw new Error('Rendered transcript message count mismatch.');
+          const imageLoaded = await reader.webContents.executeJavaScript("new Promise(resolve=>{const img=document.querySelector('.file img'); if(!img) resolve(false); else { img.loading='eager'; img.decode().then(()=>resolve(img.naturalWidth>0),()=>resolve(false)); }})");
+          if (!imageLoaded) throw new Error('Offline attachment did not render.');
+          const color = await reader.webContents.executeJavaScript("getComputedStyle(document.body).backgroundColor");
+          if (color !== 'rgb(34, 38, 44)') throw new Error('Offline archive stylesheet did not load.');
           await writeFile(join(destination, 'transcript.png'), (await reader.capturePage()).toPNG());
+          await reader.loadFile(join(archive.output, 'index.html'));
+          if (!(await reader.webContents.executeJavaScript("document.querySelector('.directory li a') !== null")))
+            throw new Error('Offline channel directory is missing.');
+          await reader.capturePage();
+          await writeFile(join(destination, 'directory.png'), (await reader.capturePage()).toPNG());
         } finally { reader.destroy(); }
-        await writeFile(join(destination, 'ui-check.json'), JSON.stringify(evidence, null, 2));
+        win.setContentSize(1305, 780);
+        const pause = new AbortController();
+        const example = await prepareExport({ mode: 'demo', guild: '1200000000000000001', formats: ['html','json'],
+          name: 'Field Archive checkpoint', output: join(destination, 'sample-output') }, await settings());
+        try {
+          await runJob(example.id, { signal: pause.signal, progress: status => {
+            if (status.stage === 'write' && status.completed >= 2) pause.abort();
+          } });
+        } catch (error) { if (error.code !== 'PAUSED') throw error; }
+        await win.webContents.executeJavaScript("document.querySelector('#tab-history').click(); new Promise(r=>setTimeout(r,400))");
+        await win.capturePage();
+        await writeFile(join(destination, 'paused.png'), (await win.capturePage()).toPNG());
+        await win.webContents.executeJavaScript("Array.from(document.querySelectorAll('#running-list button')).find(b=>b.textContent==='Resume').click()");
+        let resumed;
+        for (let i = 0; i < 25; i++) {
+          resumed = await jobStatus(example.id);
+          if (resumed.state === 'completed') break;
+          await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        if (resumed.state !== 'completed' || resumed.manifest.messageCount !== 10) throw new Error('Desktop resume did not finish the checkpointed job.');
+        await writeFile(join(destination, 'ui-check.json'), JSON.stringify({ ...evidence, offlineMedia: true, resumed: resumed.manifest.messageCount }, null, 2));
         app.exit(0);
       } catch (error) { console.error(error); app.exit(1); }
     } else win.show();

@@ -30,22 +30,57 @@ const sample = [
   ['announcements', [['Mina Park', 'Our next archive review is on Thursday. Bring one source you want to discuss.']]],
 ];
 const guild = { id: demoGuild, name: 'Field Archive' };
-const channels = sample.map(([name], i) => ({ id: String(base + BigInt(i)), guildId: demoGuild, category: i < 4 ? 'Research' : 'General', name, type: 0 }));
+const channels = sample.map(([name], i) => ({ id: String(base + BigInt(i)), guildId: demoGuild,
+  guildName: guild.name, categoryId: i < 4 ? 'research' : 'general', category: i < 4 ? 'Research' : 'General',
+  name, type: i === 3 ? 11 : 0, parentId: i === 3 ? String(base) : null, archived: i === 3 }));
 export const firstDemoChannel = channels[0].id;
+export const demoAttachmentId = '1200000000000000999';
 const names = ['Mina Park', 'Elias Reed', 'June Ellis'];
 const fixtures = new Map(channels.map((channel, i) => [channel.id, sample[i][1].map(([name, content], j) => ({
   id: String(base + 100n + BigInt(i * 10 + j)),
   timestamp: new Date(Date.UTC(2026, 10, 18, 10, 12 + j * 17)).toISOString(),
   author: { id: String(base + 200n + BigInt(names.indexOf(name))), username: name },
-  content, attachments: [], embeds: [], type: 0,
+  content, attachments: i === 0 && j === 2 ? [{
+    id: demoAttachmentId, filename: 'Harbor Survey.png', size: 18000,
+    url: 'https://cdn.discordapp.com/attachments/1200000000000000010/1200000000000000999/Harbor-Survey.png',
+    content_type: 'image/png', description: 'Fictional survey sketch',
+  }] : [], embeds: [], type: 0,
 })).reverse()]));
 
 const api = 'https://discord.com/api/v10';
 const channelKinds = new Set([0, 2, 5, 10, 11, 12, 13]);
-const normalizeChannel = (item, categories = new Map()) => ({
-  id: item.id, name: item.name || item.id, guildId: item.guild_id ?? null,
-  category: categories.get(item.parent_id) ?? '', type: item.type,
-});
+const threadKinds = new Set([10, 11, 12]);
+const forumKinds = new Set([15, 16]);
+const historyPermission = 1n << 16n;
+const viewPermission = 1n << 10n;
+const manageThreads = 1n << 34n;
+function normalizeChannel(item, byId = new Map(), guildName = '') {
+  const parent = threadKinds.has(item.type) ? byId.get(item.parent_id) : null;
+  const categoryId = parent ? parent.parent_id : byId.get(item.parent_id)?.type === 4 ? item.parent_id : null;
+  const category = byId.get(categoryId);
+  return { id: item.id, name: item.name || item.id, guildId: item.guild_id ?? null, guildName,
+    categoryId: categoryId ?? null, category: category?.name ?? '', type: item.type,
+    parentId: threadKinds.has(item.type) ? item.parent_id : null, parentName: parent?.name ?? '',
+    archived: Boolean(item.thread_metadata?.archived),
+    position: parent?.position ?? item.position ?? 0, categoryPosition: category?.position ?? -1 };
+}
+
+function channelPermissions(channel, guild, member, roles, userId) {
+  const memberRoles = new Set(member.roles);
+  let allow = roles.reduce((bits, role) => role.id === guild.id || memberRoles.has(role.id)
+    ? bits | BigInt(role.permissions) : bits, 0n);
+  if (guild.owner_id === userId || (allow & 8n)) return ~0n;
+  const overwrites = channel.permission_overwrites ?? [];
+  function apply(list) {
+    const grant = list.reduce((bits, entry) => bits | BigInt(entry.allow), 0n);
+    const deny = list.reduce((bits, entry) => bits | BigInt(entry.deny), 0n);
+    allow = (allow & ~deny) | grant;
+  }
+  apply(overwrites.filter(entry => entry.id === guild.id));
+  apply(overwrites.filter(entry => entry.type === 0 && memberRoles.has(entry.id)));
+  apply(overwrites.filter(entry => entry.type === 1 && entry.id === userId));
+  return allow;
+}
 
 const apiErrors = {
   401: ['AUTH_FAILED', 'Discord rejected the bot token. Check the token in Settings.'],
@@ -62,6 +97,7 @@ export async function source(mode, signal, fetcher = fetch) {
       if (id !== demoGuild) throw new Problem('NOT_FOUND', 'That server is outside the sample archive.');
       return channels;
     },
+    catalog: async () => ({ guild, channels, inaccessible: [], warnings: [] }),
     channel: async id => {
       const match = channels.find(item => item.id === id);
       if (!match) throw new Problem('NOT_FOUND', 'That channel is outside the sample archive.');
@@ -102,12 +138,80 @@ export async function source(mode, signal, fetcher = fetch) {
       throw new Problem(code, message);
     }
   }
+  let currentUser;
+  async function identity() {
+    const user = currentUser ??= await get('/users/@me');
+    if (!user.bot) throw new Problem('AUTH_FAILED', 'Use a bot token from the Discord Developer Portal.');
+    return { id: user.id, name: user.username };
+  }
+  async function catalog(id, { archived = false, progress = () => {}, restore = null } = {}) {
+    if (!isId(id)) throw new Problem('INVALID_CHANNEL', 'Invalid server ID.', 2);
+    const { id: userId } = await identity();
+    const guildPath = '/guilds/' + id;
+    const guild = await get(guildPath);
+    const member = await get(guildPath + '/members/' + userId);
+    const items = await get(guildPath + '/channels');
+    const byId = new Map(items.map(item => [item.id, item]));
+    const parents = items.filter(item => channelKinds.has(item.type) || forumKinds.has(item.type));
+    const perms = new Map(parents.map(item => [item.id, channelPermissions(item, guild, member, guild.roles, userId)]));
+    const readable = item => Boolean(((perms.get(item.parentId ?? item.id) ?? 0n) & (viewPermission | historyPermission)) === (viewPermission | historyPermission));
+    const inaccessible = [];
+    const rows = new Map();
+    function add(item) {
+      const value = normalizeChannel({ ...item, guild_id: id }, byId, guild.name);
+      if (readable(value)) rows.set(value.id, value);
+      else inaccessible.push({ id: value.id, name: value.name });
+    }
+    for (const item of parents) if (channelKinds.has(item.type)) add(item);
+    const active = await get(guildPath + '/threads/active');
+    for (const item of active.threads) add(item);
+    const warnings = [...(restore?.warnings ?? [])];
+    if (archived) {
+      for (const thread of restore?.threads ?? []) add(thread);
+      const finished = new Set(restore?.finished ?? []);
+      const savedThreads = new Map((restore?.threads ?? []).map(thread => [thread.id, thread]));
+      const candidates = parents.filter(item => [0, 5, 15, 16].includes(item.type) &&
+        (perms.get(item.id) & (viewPermission | historyPermission)) === (viewPermission | historyPermission));
+      for (const item of candidates) {
+        signal?.throwIfAborted();
+        if (finished.has(item.id)) continue;
+        const routes = [['public', 'timestamp']];
+        if (item.type === 0) routes.push(perms.get(item.id) & manageThreads
+          ? ['private', 'timestamp'] : ['joined/private', 'id']);
+        for (const [route, cursorType] of routes) {
+          let cursor;
+          const path = '/channels/' + item.id + (route === 'joined/private' ? '/users/@me/threads/archived/' : '/threads/archived/') + route.split('/').at(-1);
+          for (;;) {
+            let response;
+            try { response = await get(path, { limit: 100, ...(cursor ? { before: cursor } : {}) }); }
+            catch (error) {
+              if (error.code !== 'ACCESS_DENIED' && error.code !== 'NOT_FOUND') throw error;
+              warnings.push('Could not list ' + route + ' archived threads for #' + item.name + ' [' + item.id + '].');
+              break;
+            }
+            for (const thread of response.threads) { add(thread); savedThreads.set(thread.id, thread); }
+            if (!response.has_more) break;
+            const last = response.threads.at(-1);
+            const next = cursorType === 'id' ? last?.id : last?.thread_metadata?.archive_timestamp;
+            if (!next || next === cursor) {
+              warnings.push('Archived thread pagination stopped early for #' + item.name + ' [' + item.id + '].');
+              break;
+            }
+            cursor = next;
+          }
+        }
+        finished.add(item.id);
+        await progress({ stage: 'discover', completed: finished.size, total: candidates.length, found: rows.size },
+          { finished: [...finished], threads: [...savedThreads.values()], warnings });
+      }
+    }
+    return { guild: { id, name: guild.name }, inaccessible, warnings,
+      channels: [...rows.values()].sort((a, b) => a.categoryPosition - b.categoryPosition ||
+        a.position - b.position || Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)) || a.name.localeCompare(b.name)) };
+  }
   return {
-    identity: async () => {
-      const user = await get('/users/@me');
-      if (!user.bot) throw new Problem('AUTH_FAILED', 'Use a bot token from the Discord Developer Portal.');
-      return { id: user.id, name: user.username };
-    },
+    identity,
+    catalog,
     guilds: async () => {
       const guilds = [];
       let after;
@@ -121,18 +225,7 @@ export async function source(mode, signal, fetcher = fetch) {
       }
       return guilds.sort((a, b) => a.name.localeCompare(b.name));
     },
-    channels: async id => {
-      if (!isId(id)) throw new Problem('INVALID_CHANNEL', 'Invalid server ID.', 2);
-      const items = await get('/guilds/' + id + '/channels');
-      const active = await get('/guilds/' + id + '/threads/active').catch(error => {
-        if (error.code === 'ACCESS_DENIED') return { threads: [] };
-        throw error;
-      });
-      const categories = new Map(items.map(item => [item.id, item.name]));
-      return [...items, ...active.threads].filter(item => channelKinds.has(item.type))
-        .map(item => normalizeChannel({ ...item, guild_id: item.guild_id ?? id }, categories))
-        .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
-    },
+    channels: async id => (await catalog(id)).channels,
     channel: async id => {
       const item = await get('/channels/' + channelId(id));
       if (!item.guild_id || !channelKinds.has(item.type))
@@ -140,6 +233,7 @@ export async function source(mode, signal, fetcher = fetch) {
       return normalizeChannel(item);
     },
     page: async (id, query) => get('/channels/' + channelId(id) + '/messages', query),
+    message: async (id, message) => get('/channels/' + channelId(id) + '/messages/' + channelId(message)),
   };
 }
 
@@ -161,6 +255,6 @@ export function normalizeMessage(item, channel) {
     })),
     embeds: item.embeds ?? [], reactions: item.reactions ?? [],
     stickers: item.sticker_items ?? [], mentions: item.mentions ?? [],
-    flags: item.flags ?? 0, poll: item.poll ?? null,
+    flags: item.flags ?? 0, poll: item.poll ?? null, pinned: Boolean(item.pinned),
   };
 }

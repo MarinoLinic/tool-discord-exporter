@@ -3,10 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { clearToken, credentialStatus, formats, history, home, Problem, saveSettings, saveToken, settings } from './core/state.mjs';
 import { channelId, demoGuild, source } from './core/source.mjs';
-import { preview, runExport } from './core/export.mjs';
+import { prepareExport, preview, runExport, runJob } from './core/export.mjs';
+import { jobStatus, launchJob, listJobs, pauseJob, saveJobFile } from './core/jobs.mjs';
+import { jsonFields } from './core/archive.mjs';
 
 const help = [
-  'Discord Exporter 0.1.0',
+  'Discord Exporter 0.2.0',
   '',
   'Usage: discord-export <command> [options] [--print-json]',
   '',
@@ -17,6 +19,11 @@ const help = [
   '  channels --guild ID        List server channels and active threads',
   '  preview --channel ID       Read up to four recent messages',
   '  export --channel ID        Export one or more channels (repeat --channel)',
+  '  export --guild ID          Export the whole server including accessible archived threads',
+  '  jobs                       List durable export jobs',
+  '  status --job ID            Read state and progress',
+  '  pause --job ID             Request a checkpointed pause',
+  '  resume --job ID            Continue a paused or failed job',
   '  history                    List up to 100 local export receipts',
   '  config                     Read saved export defaults',
   '  config --file PATH         Apply defaults from a JSON file',
@@ -27,18 +34,22 @@ const help = [
   'Export options: --format html|jsonl|markdown|json, --output DIRECTORY,',
   '  --since YYYY-MM-DD, --until YYYY-MM-DD, --contains TEXT, --limit COUNT,',
   '  --after-id ID, --attachments, --no-attachments, --attachment-mib N, --budget-mib N.',
+  '  Repeat --format to write multiple outputs. Set --fields LIST for optional archive details.',
+  '  Use --name FOLDER to name the bundle or --background to detach an export or resume.',
+  '  Use channels --archived to include accessible archived threads in discovery.',
   'Dates are inclusive UTC. A limit selects the newest matches per channel.',
   'A Discord channel or message URL is accepted where a channel ID is expected.',
 ].join('\n');
 
 const specs = {
   doctor: [], schema: [], history: [], config: ['file'], 'auth-save': [], 'auth-clear': [],
-  check: ['demo'], guilds: ['demo'], channels: ['demo', 'guild'], preview: ['demo', 'channel'],
-  export: ['demo', 'channel', 'format', 'output', 'since', 'until', 'contains', 'limit',
+  jobs: [], status: ['job'], pause: ['job'], resume: ['job', 'background', 'quiet'], worker: ['job', 'quiet'],
+  check: ['demo'], guilds: ['demo'], channels: ['demo', 'guild', 'archived'], preview: ['demo', 'channel'],
+  export: ['demo', 'channel', 'guild', 'format', 'output', 'since', 'until', 'contains', 'limit', 'name', 'fields', 'background',
     'after-id', 'attachments', 'no-attachments', 'attachment-mib', 'budget-mib', 'quiet'],
 };
-const typeOf = key => ['demo', 'attachments', 'no-attachments', 'quiet', 'help', 'print-json'].includes(key) ? 'boolean' : 'string';
-const specFor = key => ({ type: typeOf(key), ...(key === 'channel' ? { multiple: true } : {}) });
+const typeOf = key => ['demo', 'attachments', 'no-attachments', 'quiet', 'help', 'print-json', 'background', 'archived'].includes(key) ? 'boolean' : 'string';
+const specFor = key => ({ type: typeOf(key), ...(['channel', 'format'].includes(key) ? { multiple: true } : {}) });
 const args = process.argv.slice(2);
 const json = args.includes('--print-json');
 const controller = new AbortController();
@@ -51,6 +62,12 @@ function number(value, name) {
   return Number(value);
 }
 
+function showProgress(event) {
+  const ratio = event.total ? event.completed + '/' + event.total : '—';
+  const name = event.channel ? ' #' + event.channel.name.replace(/[\x00-\x1F\x7F]/g, '') : '';
+  process.stderr.write('[' + ratio + '] ' + event.stage + name + ' · ' + event.messages + ' messages\n');
+}
+
 async function dispatch(command, flags) {
   const mode = flags.demo ? 'demo' : 'discord';
   if (command === 'schema') return {
@@ -59,10 +76,22 @@ async function dispatch(command, flags) {
     failure: { ok: false, command: 'string or null', error: { code: 'string', message: 'string' } },
     exitCodes: { 0: 'success', 1: 'operation failed', 2: 'invalid usage or runtime', 130: 'canceled' },
     commands: Object.fromEntries(Object.entries(specs).map(([name, keys]) => [name, Object.fromEntries(keys.map(key => [key, specFor(key)]))])),
-    formats, settings: await settings(), example: ['export', '--demo', '--channel', '1200000000000000010', '--format', 'jsonl', '--print-json'],
+    formats, fields: jsonFields, settings: await settings(), example: ['export', '--demo', '--channel', '1200000000000000010', '--format', 'jsonl', '--print-json'],
   };
   if (command === 'doctor') return { node: process.versions.node, platform: process.platform, home, credential: await credentialStatus(), settings: await settings() };
   if (command === 'history') return await history();
+  if (command === 'jobs') return await listJobs();
+  if (['status', 'pause', 'resume', 'worker'].includes(command)) {
+    if (!flags.job) throw new Problem('INVALID_JOB', 'Provide --job ID.', 2);
+    if (command === 'status') return await jobStatus(flags.job);
+    if (command === 'pause') return await pauseJob(flags.job);
+    if (flags.background) return await launchJob(flags.job);
+    if (command === 'resume') {
+      await jobStatus(flags.job);
+      await saveJobFile(flags.job, 'control', { pause: false });
+    }
+    return await runJob(flags.job, { signal, progress: flags.quiet ? undefined : showProgress });
+  }
   if (command === 'config') return flags.file
     ? await saveSettings({ ...await settings(), ...JSON.parse((await readFile(resolve(flags.file), 'utf8')).replace(/^\uFEFF/, '')) })
     : await settings();
@@ -86,26 +115,26 @@ async function dispatch(command, flags) {
     const config = await settings();
     if (flags.attachments && flags['no-attachments'])
       throw new Problem('INVALID_OPTIONS', 'Choose only one attachment mode.', 2);
-    return await runExport({
-      channels: flags.channel, mode,
-      format: flags.format ?? config.format,
+    const options = {
+      channels: flags.channel, guild: flags.guild, mode, name: flags.name,
+      format: flags.format?.[0] ?? config.format, formats: flags.format,
+      fields: flags.fields === undefined ? undefined : flags.fields.split(',').map(value => value.trim()).filter(Boolean),
       output: flags.output ? resolve(flags.output) : config.output,
       since: flags.since, until: flags.until, contains: flags.contains, afterId: flags['after-id'],
       limit: number(flags.limit, '--limit') ?? config.limit,
       attachments: flags.attachments ?? (flags['no-attachments'] ? false : config.attachments),
       attachmentMiB: number(flags['attachment-mib'], '--attachment-mib') ?? config.attachmentMiB,
       budgetMiB: number(flags['budget-mib'], '--budget-mib') ?? config.budgetMiB,
-    }, config, { signal, progress: event => {
-      if (!flags.quiet) process.stderr.write('[' + (event.completed + 1) + '/' + event.total + '] ' +
-        event.stage + ' #' + event.channel.name.replace(/[\x00-\x1F\x7F]/g, '') + ' · ' + event.matched + ' matches\n');
-    } });
+    };
+    if (flags.background) return await launchJob((await prepareExport(options, config)).id);
+    return await runExport(options, config, { signal, progress: flags.quiet ? undefined : showProgress });
   }
   const provider = await source(mode, signal);
   if (command === 'check') return await provider.identity();
   if (command === 'guilds') return await provider.guilds();
   if (command === 'channels') {
     if (!flags.guild && !flags.demo) throw new Problem('INVALID_OPTIONS', 'Provide --guild ID.', 2);
-    return await provider.channels(flags.guild ?? demoGuild);
+    return flags.archived ? await provider.catalog(flags.guild ?? demoGuild, { archived: true }) : await provider.channels(flags.guild ?? demoGuild);
   }
 }
 
@@ -131,15 +160,15 @@ try {
     }
     const result = await dispatch(command, values);
     if (json) console.log(JSON.stringify({ ok: true, command, result }));
-    else if (command === 'export') {
+    else if (result.messageCount !== undefined) {
       console.log('Saved ' + result.messageCount + ' messages to ' + result.output);
       for (const warning of result.warnings) console.error(warning);
     } else console.log(JSON.stringify(result, null, 2));
   }
 } catch (error) {
   const canceled = signal.aborted || error.name === 'AbortError';
-  const code = canceled ? 'CANCELED' : error instanceof Problem ? error.code : error.code ?? 'FAILED';
-  const message = canceled ? 'Export canceled.' : error.message;
+  const code = canceled && error.code !== 'PAUSED' ? 'CANCELED' : error instanceof Problem ? error.code : error.code ?? 'FAILED';
+  const message = canceled && error.code !== 'PAUSED' ? 'Export paused.' : error.message;
   process.exitCode = canceled ? 130 : error.exit ?? 1;
   if (json) console.log(JSON.stringify({ ok: false, command: command ?? null, error: { code, message } }));
   else console.error(code + ': ' + message);

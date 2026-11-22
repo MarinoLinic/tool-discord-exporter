@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Discord Exporter</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="selection.css">
 <script src="ui.js" defer></script>
 </head>
 <body>
@@ -31,7 +32,7 @@
     <button type="button" data-tab="automation" id="tab-automation"><svg aria-hidden="true"><use href="#terminal"/></svg>Automation</button>
     <button type="button" data-tab="settings" id="tab-settings"><svg aria-hidden="true"><use href="#gear"/></svg>Settings</button>
   </nav>
-  <div class="rail-foot"><span class="dot"></span><span>Local workspace</span><small>v0.1</small></div>
+  <div class="rail-foot"><span class="dot"></span><span>Local workspace</span><small>v0.2</small></div>
 </aside>
 <main>
   <div class="topbar">
@@ -46,27 +47,34 @@
         <section class="panel channel-panel">
           <div class="panel-title"><h2>Channels</h2><span class="count" id="selection-count">0 selected</span></div>
           <label class="field">Server<select id="guild" aria-label="Server"></select></label>
-          <label class="finder"><svg aria-hidden="true"><use href="#search"/></svg><input id="channel-search" type="search" aria-label="Find channels" placeholder="Find a channel"></label>
-          <div id="channel-list" class="channel-list"></div>
+          <div class="catalog-tools">
+            <label class="finder"><svg aria-hidden="true"><use href="#search"/></svg><input id="channel-search" type="search" aria-label="Find channels" placeholder="Search channels, threads, or categories"></label>
+            <label class="field scope-input"><span class="sr-only">Show channels or threads</span><select id="channel-scope"><option value="all">All items</option><option value="channels">Channels</option><option value="threads">Threads</option></select></label>
+          </div>
+          <div class="selection-tools"><label><input id="select-all" type="checkbox"><span id="select-all-label">Select all channels</span></label><div><button class="text-button" type="button" id="load-archived">Find archived threads</button><button class="text-button" type="button" id="clear-selection">Clear</button></div></div>
+          <p class="field-note catalog-status" id="catalog-status" role="status"></p>
+          <div id="channel-list" class="channel-list" aria-label="Channel selection"></div>
           <form id="add-form" class="field"><label for="channel-link">Add by link or ID</label><div class="input-row"><input id="channel-link" placeholder="discord.com/channels/…" aria-label="Discord link or ID"><button type="submit" class="ghost">Add</button></div></form>
         </section>
         <form class="panel options-panel" id="export-form">
           <div class="panel-title"><h2>Export setup</h2></div>
-          <fieldset><legend>Format</legend><div class="format-options" id="formats"></div></fieldset>
+          <fieldset><legend>Formats</legend><div class="format-options" id="formats"></div></fieldset>
           <div class="control-grid">
             <label class="field">From date<input type="date" id="since"></label><label class="field">Through date<input type="date" id="until"></label>
             <label class="field">Contains text<input id="contains" maxlength="300" placeholder="Any message"></label><label class="field">Newest per channel<input id="limit" type="number" min="0" max="10000000" placeholder="All matches"></label>
           </div>
           <p class="field-note">Dates include the entire day in UTC.</p>
-          <div class="attachment-line"><label><input type="checkbox" id="attachments"> Download attachments</label><span id="attachment-note"></span></div>
+          <div class="attachment-line"><label><input type="checkbox" id="attachments"> Download attachment files</label><span id="attachment-note"></span></div>
           <div class="field output-field"><label for="output">Save to</label><div class="input-row"><input id="output" required spellcheck="false"><button class="icon-button ghost" id="choose-output" type="button" aria-label="Choose output folder"><svg aria-hidden="true"><use href="#folder"/></svg></button></div></div>
-          <div class="run-row"><button type="submit" class="primary" id="submit-export"><svg aria-hidden="true"><use href="#arrow"/></svg><span>Export selected</span></button><button type="button" class="ghost" id="cancel" hidden>Cancel</button><button type="button" class="text-button" id="copy-export">Copy CLI command</button></div>
+          <label class="field archive-name">Archive folder name<input id="archive-name" maxlength="100" placeholder="Automatic"></label>
+          <div class="run-row"><button type="submit" class="primary" id="submit-export"><svg aria-hidden="true"><use href="#arrow"/></svg><span>Start export</span></button><button type="button" class="ghost" id="show-message-preview">Preview</button><button type="button" class="text-button" id="copy-export">Copy CLI command</button></div>
           <div id="job" role="status" class="job" hidden></div>
+          <details class="json-details"><summary>Transcript details</summary><p class="field-note">Choose optional archive fields. JSON stores author details in a shared file.</p><div class="detail-options" id="detail-options"></div></details>
         </form>
-      <section class="panel preview-panel" id="preview-panel">
-        <div class="panel-title"><h2>Message preview</h2><span id="preview-channel"></span></div>
+      <dialog id="preview-panel" class="panel preview-dialog" aria-labelledby="preview-title">
+        <div class="panel-title"><div><h2 id="preview-title">Message preview</h2><p class="field-note" id="preview-channel"></p></div><form method="dialog"><button class="ghost" type="submit">Close</button></form></div>
         <div id="message-preview"></div>
-      </section>
+      </dialog>
       </div>
     </section>
     <section data-page="settings" hidden>
@@ -86,7 +94,7 @@
           <div class="control-grid"><label class="field">Format<select id="default-format"></select></label><label class="field">Newest messages per channel<input id="default-limit" type="number" min="0" max="10000000" placeholder="All matches"></label></div>
           <div class="control-grid"><label class="field">File cap (MiB)<input id="file-cap" type="number" min="1" max="1024" required></label><label class="field">Job cap (MiB)<input id="job-cap" type="number" min="1" max="16384" required></label></div>
           <label class="check-line"><input type="checkbox" id="default-attachments"> Download attachments by default</label>
-          <label class="check-line"><input type="checkbox" id="show-preview"> Show message previews</label>
+          <label class="check-line"><input type="checkbox" id="show-preview"> Enable message preview</label>
           <div class="action-row"><button type="submit" class="primary">Save defaults</button></div>
         </form>
       </div>
@@ -102,14 +110,15 @@
         </section>
         <section class="panel contract">
           <div class="panel-title"><h2>CLI contract</h2></div>
-          <dl><dt>Discover</dt><dd><code>schema --print-json</code></dd><dt>Check setup</dt><dd><code>doctor --print-json</code></dd><dt>Probe access</dt><dd><code>check</code>, <code>guilds</code>, <code>channels</code>, <code>preview</code></dd><dt>Automate</dt><dd><code>export --format jsonl --print-json</code></dd><dt>Continue</dt><dd>Use <code>--after-id</code> with one channel.</dd></dl>
+          <dl><dt>Discover</dt><dd><code>schema --print-json</code></dd><dt>Check setup</dt><dd><code>doctor --print-json</code></dd><dt>Probe access</dt><dd><code>check</code>, <code>guilds</code>, <code>channels</code>, <code>preview</code></dd><dt>Automate</dt><dd><code>export --format html --format json --background</code></dd><dt>Continue</dt><dd><code>status --job ID</code> and <code>resume --job ID</code></dd></dl>
           <p class="field-note">JSON goes to stdout. Progress goes to stderr. Exports are saved locally.</p>
         </section>
       </div>
     </section>
     <section data-page="history" hidden>
       <header class="page-title"><div><h1>Export history</h1><p>Open bundles created from the desktop app or CLI.</p></div><button class="ghost" id="refresh-history" type="button">Refresh</button></header>
-      <section class="panel history-panel"><div id="history-list"></div></section>
+      <section class="panel job-panel"><div class="panel-title"><h2>Export jobs</h2></div><div id="running-list"></div></section>
+      <section class="panel history-panel"><div class="panel-title"><h2>Finished archives</h2></div><div id="history-list"></div></section>
     </section>
   </div>
 </main>
