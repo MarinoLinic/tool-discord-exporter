@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Discord Exporter</title>
+<link rel="stylesheet" href="style.css">
+<script src="ui.js" defer></script>
+</head>
+<body>
+<svg width="0" height="0" class="sprite" aria-hidden="true"><defs>
+<symbol id="archive" viewBox="0 0 24 24"><path d="M4 8h16v12H4zM3 4h18v4H3zM9 12h6"/></symbol>
+<symbol id="clock" viewBox="0 0 24 24"><path d="M4 11a8 8 0 1 1 2 7M4 4v7h7m1-4v6l3 2"/></symbol>
+<symbol id="terminal" viewBox="0 0 24 24"><path d="m5 7 5 5-5 5m8 0h6"/></symbol>
+<symbol id="gear" viewBox="0 0 24 24"><path d="m10 3-.8 3-2 .9-2.8-.9-2 3.4 2.1 2.1v2L2.4 16l2 3.4 2.8-.9 2 .9.8 2.6h4l.8-2.6 2-.9 2.8.9 2-3.4-2.1-2.5v-2l2.1-2.1-2-3.4-2.8.9-2-.9-.8-3z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v12H3z"/></symbol>
+<symbol id="file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM9 12h6m-6 4h6"/></symbol>
+<symbol id="chat" viewBox="0 0 24 24"><path d="M3 5h18v12H10l-5 4v-4H3zm4 4h10M7 13h7"/></symbol>
+<symbol id="code" viewBox="0 0 24 24"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-2-15-4 18"/></symbol>
+<symbol id="lines" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h10"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="5.5"/><path d="m14 14 5 5"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4 10-10"/></symbol>
+</defs></svg>
+<aside class="rail">
+  <div class="identity"><img src="../icon.svg" alt=""><div>Discord<span>Exporter</span></div></div>
+  <nav aria-label="Workspace">
+    <button type="button" data-tab="export" id="tab-export" aria-current="page"><svg aria-hidden="true"><use href="#archive"/></svg>New export</button>
+    <button type="button" data-tab="history" id="tab-history"><svg aria-hidden="true"><use href="#clock"/></svg>Export history</button>
+    <button type="button" data-tab="automation" id="tab-automation"><svg aria-hidden="true"><use href="#terminal"/></svg>Automation</button>
+    <button type="button" data-tab="settings" id="tab-settings"><svg aria-hidden="true"><use href="#gear"/></svg>Settings</button>
+  </nav>
+  <div class="rail-foot"><span class="dot"></span><span>Local workspace</span><small>v0.1</small></div>
+</aside>
+<main>
+  <div class="topbar">
+    <span id="breadcrumb">Workspace <span>/</span> New export</span>
+    <div class="source-switch" role="group" aria-label="Data source"><button type="button" id="demo-mode" aria-pressed="true">Sample archive</button><button type="button" id="live-mode" aria-pressed="false">Discord</button></div>
+  </div>
+  <div class="main-content">
+    <div id="notice" role="status" hidden></div>
+    <section data-page="export">
+      <header class="page-title"><div><h1>New export</h1><p>Save Discord history as a readable transcript or structured data.</p></div><span class="source-tag" id="source-tag"></span></header>
+      <div class="work-grid">
+        <section class="panel channel-panel">
+          <div class="panel-title"><h2>Channels</h2><span class="count" id="selection-count">0 selected</span></div>
+          <label class="field">Server<select id="guild" aria-label="Server"></select></label>
+          <label class="finder"><svg aria-hidden="true"><use href="#search"/></svg><input id="channel-search" type="search" aria-label="Find channels" placeholder="Find a channel"></label>
+          <div id="channel-list" class="channel-list"></div>
+          <form id="add-form" class="field"><label for="channel-link">Add by link or ID</label><div class="input-row"><input id="channel-link" placeholder="discord.com/channels/…" aria-label="Discord link or ID"><button type="submit" class="ghost">Add</button></div></form>
+        </section>
+        <form class="panel options-panel" id="export-form">
+          <div class="panel-title"><h2>Export setup</h2></div>
+          <fieldset><legend>Format</legend><div class="format-options" id="formats"></div></fieldset>
+          <div class="control-grid">
+            <label class="field">From date<input type="date" id="since"></label><label class="field">Through date<input type="date" id="until"></label>
+            <label class="field">Contains text<input id="contains" maxlength="300" placeholder="Any message"></label><label class="field">Newest per channel<input id="limit" type="number" min="0" max="10000000" placeholder="All matches"></label>
+          </div>
+          <p class="field-note">Dates include the entire day in UTC.</p>
+          <div class="attachment-line"><label><input type="checkbox" id="attachments"> Download attachments</label><span id="attachment-note"></span></div>
+          <div class="field output-field"><label for="output">Save to</label><div class="input-row"><input id="output" required spellcheck="false"><button class="icon-button ghost" id="choose-output" type="button" aria-label="Choose output folder"><svg aria-hidden="true"><use href="#folder"/></svg></button></div></div>
+          <div class="run-row"><button type="submit" class="primary" id="submit-export"><svg aria-hidden="true"><use href="#arrow"/></svg><span>Export selected</span></button><button type="button" class="ghost" id="cancel" hidden>Cancel</button><button type="button" class="text-button" id="copy-export">Copy CLI command</button></div>
+          <div id="job" role="status" class="job" hidden></div>
+        </form>
+      <section class="panel preview-panel" id="preview-panel">
+        <div class="panel-title"><h2>Message preview</h2><span id="preview-channel"></span></div>
+        <div id="message-preview"></div>
+      </section>
+      </div>
+    </section>
+    <section data-page="settings" hidden>
+      <header class="page-title"><div><h1>Settings</h1><p>Manage the bot connection and defaults shared by the desktop app and CLI.</p></div></header>
+      <div class="settings-grid">
+        <section class="panel">
+          <div class="panel-title"><h2>Discord connection</h2><span id="credential-badge" class="count"></span></div>
+          <p class="section-intro">Use a bot installed in the server with View Channel and Read Message History. Enable Message Content in the Discord Developer Portal to export text and attachments.</p>
+          <form id="token-form"><label class="field">Bot token<input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="Paste a new bot token" required></label><div class="action-row"><button class="primary" type="submit">Save token</button><button class="ghost" id="check-token" type="button">Test connection</button></div></form>
+          <div class="action-row credential-actions"><button id="reveal-token" class="text-button" type="button">Reveal saved token</button><button id="clear-token" class="text-button" type="button">Clear saved token</button></div>
+          <input id="revealed" type="text" aria-label="Saved Discord bot token" readonly hidden>
+          <p id="credential-source" class="field-note"></p>
+        </section>
+        <form class="panel" id="settings-form">
+          <div class="panel-title"><h2>Export defaults</h2></div>
+          <div class="field"><label for="default-output">Output folder</label><div class="input-row"><input id="default-output" required spellcheck="false"><button class="icon-button ghost" id="choose-default" type="button" aria-label="Choose default folder"><svg aria-hidden="true"><use href="#folder"/></svg></button></div></div>
+          <div class="control-grid"><label class="field">Format<select id="default-format"></select></label><label class="field">Newest messages per channel<input id="default-limit" type="number" min="0" max="10000000" placeholder="All matches"></label></div>
+          <div class="control-grid"><label class="field">File cap (MiB)<input id="file-cap" type="number" min="1" max="1024" required></label><label class="field">Job cap (MiB)<input id="job-cap" type="number" min="1" max="16384" required></label></div>
+          <label class="check-line"><input type="checkbox" id="default-attachments"> Download attachments by default</label>
+          <label class="check-line"><input type="checkbox" id="show-preview"> Show message previews</label>
+          <div class="action-row"><button type="submit" class="primary">Save defaults</button></div>
+        </form>
+      </div>
+      <section class="panel storage"><div class="panel-title"><h2>Local storage</h2></div><p class="section-intro">Your settings, Windows-encrypted token, and recent export receipts are kept here.</p><code id="home"></code></section>
+    </section>
+    <section data-page="automation" hidden>
+      <header class="page-title"><div><h1>Automation</h1><p>Run the same workflows in PowerShell, scripts, or an AI agent.</p></div></header>
+      <div class="automation-grid">
+        <section class="panel command-panel">
+          <div class="panel-title"><h2>Current export command</h2><button type="button" id="automation-copy" class="ghost">Copy</button></div>
+          <pre><code id="command"></code></pre>
+          <p class="field-note">This command uses your workspace selection and omits credentials.</p>
+        </section>
+        <section class="panel contract">
+          <div class="panel-title"><h2>CLI contract</h2></div>
+          <dl><dt>Discover</dt><dd><code>schema --print-json</code></dd><dt>Check setup</dt><dd><code>doctor --print-json</code></dd><dt>Probe access</dt><dd><code>check</code>, <code>guilds</code>, <code>channels</code>, <code>preview</code></dd><dt>Automate</dt><dd><code>export --format jsonl --print-json</code></dd><dt>Continue</dt><dd>Use <code>--after-id</code> with one channel.</dd></dl>
+          <p class="field-note">JSON goes to stdout. Progress goes to stderr. Exports are saved locally.</p>
+        </section>
+      </div>
+    </section>
+    <section data-page="history" hidden>
+      <header class="page-title"><div><h1>Export history</h1><p>Open bundles created from the desktop app or CLI.</p></div><button class="ghost" id="refresh-history" type="button">Refresh</button></header>
+      <section class="panel history-panel"><div id="history-list"></div></section>
+    </section>
+  </div>
+</main>
+</body>
+</html>

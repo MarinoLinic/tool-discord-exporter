@@ -1,0 +1,18 @@
+{
+  "name": "tool-discord-exporter",
+  "productName": "Discord Exporter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "desktop/main.mjs",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node scripts/launch.cjs",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "45.4.1"
+  }
+}
