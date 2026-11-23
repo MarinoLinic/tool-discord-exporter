@@ -7,7 +7,7 @@ Export Discord server history from a Windows desktop app or from a CLI designed 
 ## Open on Windows
 
 1. Install Node.js 24 or later. Run `Setup.cmd` once to install the desktop runtime.
-2. Open `Open Discord Exporter.cmd`. The **Sample archive** works offline and exports fictional messages.
+2. Open `Open Discord Exporter.cmd`. The desktop workspace opens directly to your Discord servers or prompts you to add a bot token in Settings.
 3. For a live export, create or use a bot in the [Discord Developer Portal](https://discord.com/developers/applications), install it in the server, and give it **View Channel** and **Read Message History** for the channels you want. Enable [Message Content](https://support-dev.discord.com/hc/en-us/articles/6207308062871-What-are-Privileged-Intents) so the API can return message text and attachments.
 4. Open **Settings**, paste the bot token, click **Save token**, then **Test connection**. Click **Discord** and choose a server. Select individual items, whole categories, or all listed items. Search and the channel/thread filter narrow the scope of Select All. **Find archived threads** includes additional threads the bot can read. **Preview** opens recent messages on demand.
 5. Choose one or more formats, pick optional transcript details, and turn on **Download attachment files** if you want offline copies. Click **Start export**. The job continues when you close the app. **Export history** shows progress, pause, resume, and completed folders. **Automation** copies the current selection as a PowerShell command.

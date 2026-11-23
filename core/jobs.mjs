@@ -42,8 +42,9 @@ export function lockJob(id) {
   return () => { db.exec('ROLLBACK'); db.close(); };
 }
 
-async function readStatus(id) {
+async function readStatus(id, mode) {
   const [config, status] = await Promise.all([loadJobFile(id, 'job'), loadJobFile(id, 'status')]);
+  if (mode && config.options.mode !== mode) return null;
   if (status.state === 'running' || status.state === 'queued') {
     let release;
     try { release = lockJob(id); }
@@ -58,12 +59,12 @@ async function readStatus(id) {
   }
   return status;
 }
-export const jobStatus = readStatus;
+export const jobStatus = id => readStatus(id);
 
-export async function listJobs() {
+export async function listJobs(mode) {
   const dirs = await readdir(root).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
   return (await Promise.all(dirs.filter(id => jobPattern.test(id)).sort().reverse().slice(0, 100)
-    .map(id => readStatus(id).catch(error => { if (error.code === 'JOB_NOT_FOUND') return null; throw error; })))).filter(Boolean);
+    .map(id => readStatus(id, mode).catch(error => { if (error.code === 'JOB_NOT_FOUND') return null; throw error; })))).filter(Boolean);
 }
 
 export async function launchJob(id) {

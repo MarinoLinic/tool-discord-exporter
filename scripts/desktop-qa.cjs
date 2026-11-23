@@ -7,7 +7,10 @@
     }
     throw new Error('Timed out at ' + label + ': ' + find('#notice').textContent + ' ' + find('#job').textContent);
   }
-  await until(() => find('#selection-count').textContent === '1 selected', 'sample channel catalog');
+  await until(() => find('.channel input'), 'channel catalog');
+  if (document.body.innerText.includes('Sample archive') || find('#selection-count').textContent !== '0 selected')
+    throw new Error('Startup should open the Discord workspace with nothing selected.');
+  find('.channel input[aria-label="field-notes"]').click();
   find('#show-message-preview').click();
   await until(() => find('#preview-panel').open && document.querySelectorAll('.message').length === 4, 'on-demand preview');
   find('#preview-panel button').click();
@@ -43,6 +46,7 @@
   for (const flag of ['--format=html', '--format=json', '--background', '--print-json']) {
     if (!find('#command').textContent.includes(flag)) throw new Error('CLI command missing ' + flag);
   }
+  if (find('#command').textContent.includes('--demo')) throw new Error('Desktop command must target Discord.');
   find('#tab-settings').click();
   find('#default-limit').value = '42';
   find('#settings-form button[type=submit]').click();
@@ -53,10 +57,7 @@
   find('#settings-form button[type=submit]').click();
   await until(() => find('#limit').value === '' && find('#output').value.includes('Discord Archives'), 'restore settings and short display path');
   find('#tab-export').click();
-  find('#live-mode').click();
-  await until(() => find('#notice').textContent.includes('Add a Discord bot token'), 'missing credential guidance');
-  find('#demo-mode').click();
-  await until(() => find('#selection-count').textContent === '1 selected', 'return to sample');
+
   find('.json-details').open = true;
-  return { preview: 4, exported: 6, checked: ['category checkboxes', 'Select All', 'filtered channels', 'archived thread filter', 'on-demand preview', 'background HTML and JSON', 'history', 'automation flags', 'credentials and settings'] };
+  return { preview: 4, exported: 6, checked: ['category checkboxes', 'Select All', 'filtered channels', 'archived thread filter', 'on-demand preview', 'background HTML and JSON', 'history', 'automation flags', 'startup and settings'] };
 })()

@@ -180,29 +180,6 @@ main {
   margin:0 8px;
 }
 
-.source-switch {
-  display:flex;
-  padding:3px;
-  border:1px solid var(--line);
-  border-radius:8px;
-  gap:2px;
-  background:var(--field);
-}
-
-.source-switch button {
-  border:0;
-  border-radius:5px;
-  padding:4px 10px;
-  background:none;
-  color:var(--muted);
-  font-size:12px;
-}
-
-.source-switch button[aria-pressed=true] {
-  background:#2b4952;
-  color:var(--ink);
-}
-
 .main-content {
   max-width:1350px;
   margin:auto;
@@ -236,7 +213,7 @@ h1 {
   font-size:15px;
 }
 
-.source-tag,.count {
+.count {
   font:12px/1.2 Consolas,monospace;
   white-space:nowrap;
   color:var(--teal);
@@ -244,10 +221,6 @@ h1 {
   border:1px solid #395b60;
   padding:6px 9px;
   border-radius:6px;
-}
-
-.source-tag {
-  align-self:center;
 }
 
 .work-grid,.settings-grid,.automation-grid {
@@ -804,9 +777,6 @@ pre {
 @media(max-width:730px) {
   .work-grid,.settings-grid,.automation-grid {
     grid-template-columns:1fr;
-  }
-  .source-tag {
-    display:none;
   }
   .main-content,.topbar {
     padding-left:15px;

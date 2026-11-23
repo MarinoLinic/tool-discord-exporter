@@ -1,6 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
-const ui = { mode: 'demo', tab: 'export', channels: [], selected: new Map(), collapsed: new Set(), generation: 0, previewVersion: 0, busy: false };
+const ui = { tab: 'export', channels: [], selected: new Map(), collapsed: new Set(), generation: 0, previewVersion: 0, busy: false };
 const formatChoices = [
   ['html', 'HTML', 'Readable archive', 'file'], ['jsonl', 'JSONL', 'AI and scripts', 'terminal'],
   ['markdown', 'Markdown', 'Portable text', 'lines'], ['json', 'JSON', 'Structured data', 'code'],
@@ -116,6 +116,7 @@ function showTab(tab) {
   for (const page of $$('[data-page]')) page.hidden = page.dataset.page !== tab;
   $('#breadcrumb').replaceChildren('Workspace ', el('span', '/'), ' ' + pages[tab]);
   window.scrollTo(0, 0);
+  if (tab === 'export' && ui.reloadGuilds) void guarded(loadGuilds)();
   if (tab === 'history') void guarded(renderJobs)();
   if (tab === 'automation') renderCommand();
   if (tab === 'settings') void guarded(async () => displayCredentials(await call('status')))();
@@ -211,7 +212,7 @@ function renderChannels() {
     }
   }
   list.replaceChildren(fragment);
-  if (!list.childElementCount) list.append(el('p', ui.loading ? 'Loading channels…' : search ? 'No channels or threads match.' : 'Choose a server or add a channel link.', 'empty'));
+  if (!list.childElementCount) list.append(el('p', ui.loading ? 'Loading channels…' : search ? 'No channels or threads match.' : ui.needsToken ? 'No channels yet.' : 'Choose a server or add a channel link.', 'empty'));
   list.scrollTop = scrollTop;
   if (focus) [...list.querySelectorAll('[data-focus]')].find(item => item.dataset.focus === focus)?.focus({ preventScroll: true });
 }
@@ -225,7 +226,7 @@ function updateSelection() {
   renderCommand();
 }
 
-async function loadChannels(id, autoselect = false, archived = false) {
+async function loadChannels(id, archived = false) {
   const generation = ++ui.generation;
   const prior = [...ui.channels];
   ui.loading = true;
@@ -234,10 +235,9 @@ async function loadChannels(id, autoselect = false, archived = false) {
   $('#catalog-status').textContent = archived ? 'Looking for archived threads…' : 'Loading channels…';
   renderChannels();
   try {
-    const result = id ? await call('channels', { mode: ui.mode, id, archived, generation }) : { channels: [], inaccessible: [], warnings: [] };
+    const result = id ? await call('channels', { id, archived, generation }) : { channels: [], inaccessible: [], warnings: [] };
     if (generation !== ui.generation) return;
     ui.channels = result.channels;
-    if (autoselect && result.channels.length) ui.selected.set(result.channels[0].id, result.channels[0]);
     const before = new Set(prior.map(item => item.id));
     if (archived && prior.length && prior.every(item => ui.selected.has(item.id))) {
       for (const item of result.channels) if (!before.has(item.id)) ui.selected.set(item.id, item);
@@ -246,7 +246,7 @@ async function loadChannels(id, autoselect = false, archived = false) {
     const textChannels = result.channels.length - threads;
     $('#catalog-status').textContent = textChannels + (textChannels === 1 ? ' channel · ' : ' channels · ') + threads +
       (threads === 1 ? ' thread' : ' threads') +
-      (archived ? ' · Archived checked' : ui.mode === 'discord' ? ' · Active threads only' : '') +
+      (archived ? ' · Archived checked' : ' · Active threads only') +
       (result.inaccessible.length ? ' · ' + result.inaccessible.length + ' unavailable' : '');
     if (result.warnings.length) notice(result.warnings.length + ' archived thread listings were unavailable.', true);
   } catch (error) {
@@ -254,17 +254,17 @@ async function loadChannels(id, autoselect = false, archived = false) {
   } finally {
     if (generation === ui.generation) {
       ui.loading = false;
-      $('#load-archived').disabled = !id || ui.mode === 'demo';
+      $('#load-archived').disabled = !id;
       renderChannels();
       updateSelection();
     }
   }
 }
 
-async function selectSource(mode) {
-  if (ui.busy) return;
+async function loadGuilds() {
+  ui.reloadGuilds = false;
+  ui.needsToken = false;
   const generation = ++ui.generation;
-  ui.mode = mode;
   ui.selected.clear();
   ui.manual = new Map();
   ui.collapsed.clear();
@@ -275,23 +275,27 @@ async function selectSource(mode) {
   ui.loading = true;
   $('#channel-search').value = $('#channel-link').value = '';
   $('#guild').replaceChildren(choice('Loading…', ''));
-  $('#demo-mode').setAttribute('aria-pressed', String(mode === 'demo'));
-  $('#live-mode').setAttribute('aria-pressed', String(mode === 'discord'));
-  $('#source-tag').textContent = mode === 'demo' ? 'Fictional sample data' : 'Discord bot connection';
   notice();
   renderChannels();
   updateSelection();
   try {
-    const guilds = await call('guilds', mode);
+    const guilds = await call('guilds');
     if (generation !== ui.generation) return;
     $('#guild').replaceChildren(...(guilds.length ? guilds.map(item => choice(item.name, item.id)) : [choice('No servers', '')]));
-    await loadChannels(guilds[0]?.id, mode === 'demo');
+    if (guilds.length) await loadChannels(guilds[0].id);
+    else {
+      ui.loading = false;
+      $('#catalog-status').textContent = 'This bot has not joined any Discord servers.';
+      renderChannels();
+    }
   } catch (error) {
     if (generation !== ui.generation) return;
     ui.loading = false;
     $('#guild').replaceChildren(choice('No server selected', ''));
+    ui.needsToken = error.code === 'MISSING_TOKEN';
     renderChannels();
-    notice(error.message, true);
+    if (ui.needsToken) $('#catalog-status').textContent = 'Add a Discord bot token in Settings to load your servers.';
+    else notice(error.message, true);
   }
 }
 
@@ -304,7 +308,7 @@ async function renderPreview() {
   pane.replaceChildren(el('p', channel ? 'Loading messages…' : 'Select a channel to see recent messages.', 'empty'));
   if (!channel) return;
   try {
-    const rows = await call('preview', { mode: ui.mode, id: channel.id });
+    const rows = await call('preview', channel.id);
     if (version !== ui.previewVersion) return;
     pane.replaceChildren(...rows.map(message => {
       const name = message.author?.displayName ?? 'Unknown author';
@@ -329,7 +333,7 @@ async function renderPreview() {
 
 function inputOptions() {
   return {
-    mode: ui.mode, channels: [...ui.selected.keys()], catalog: [...ui.selected.values()],
+    channels: [...ui.selected.keys()], catalog: [...ui.selected.values()],
     formats: $$('input[name=format]:checked').map(input => input.value),
     fields: $$('#detail-options input:checked').map(input => input.value), name: $('#archive-name').value.trim(),
     since: $('#since').value, until: $('#until').value, contains: $('#contains').value, limit: Number($('#limit').value),
@@ -343,7 +347,6 @@ function command() {
   const config = inputOptions();
   if (!config.channels.length || !config.formats.length) return '';
   const args = ['node', quote(ui.root + '\\cli.mjs'), 'export'];
-  if (config.mode === 'demo') args.push('--demo');
   for (const id of config.channels) args.push('--channel=' + id);
   for (const format of config.formats) args.push('--format=' + format);
   args.push(quote('--fields=' + config.fields.join(',')));
@@ -380,7 +383,7 @@ async function renderHistory() {
     const row = el('div', undefined, 'history-row');
     const names = job.channels.slice(0, 2).map(value => '#' + value.channel.name).join(', ');
     const name = el('div', job.guild?.name ?? (names + (job.channels.length > 2 ? ' +' + (job.channels.length - 2) : '')));
-    name.append(el('small', job.name || (job.source === 'demo' ? 'Sample archive' : 'Discord')));
+    name.append(el('small', job.name || 'Discord'));
     row.append(name, el('code', (job.formats || [job.format]).join(' + ').toUpperCase()), el('div', job.messageCount),
       el('div', timeFormat.format(new Date(job.finishedAt))), openButton(job.jobId));
     return row;
@@ -474,21 +477,19 @@ async function start() {
     tab.title = pages[tab.dataset.tab];
     tab.addEventListener('click', () => showTab(tab.dataset.tab));
   }
-  on('#demo-mode', 'click', () => selectSource('demo'));
-  on('#live-mode', 'click', () => selectSource('discord'));
   on('#guild', 'change', event => loadChannels(event.target.value));
   on('#channel-search', 'input', renderChannels);
   on('#channel-scope', 'change', renderChannels);
   on('#select-all', 'change', event => setSelected(visibleChannels(), event.target.checked));
   on('#clear-selection', 'click', () => { ui.selected.clear(); renderChannels(); updateSelection(); });
-  on('#load-archived', 'click', () => loadChannels($('#guild').value, false, true));
+  on('#load-archived', 'click', () => loadChannels($('#guild').value, true));
   on('#show-message-preview', 'click', async () => { $('#preview-panel').showModal(); await renderPreview(); });
   on('#add-form', 'submit', async event => {
     event.preventDefault();
     const link = $('#channel-link').value.trim();
     if (!link) return;
     const generation = ui.generation;
-    const channel = await call('channel', { mode: ui.mode, id: link });
+    const channel = await call('channel', link);
     if (generation !== ui.generation) return;
     $('#channel-link').value = '';
     ui.manual.set(channel.id, channel);
@@ -544,6 +545,7 @@ async function start() {
     field.value = '';
     hideToken();
     displayCredentials(await call('saveToken', token));
+    ui.reloadGuilds = true;
     notice('Token encrypted and saved.');
   });
   on('#check-token', 'click', async () => {
@@ -563,8 +565,9 @@ async function start() {
   on('#clear-token', 'click', async () => {
     hideToken();
     displayCredentials(await call('clearToken'));
+    ui.reloadGuilds = true;
     notice('Saved token cleared.');
   });
-  await selectSource('demo');
+  await loadGuilds();
 }
 void guarded(start)();

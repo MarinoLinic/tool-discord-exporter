@@ -9,7 +9,9 @@ import { jobStatus, launchJob, listJobs, pauseJob } from '../core/jobs.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const root = join(here, '..');
-const qa = process.argv.includes('--qa');
+const unconfiguredQa = process.argv.includes('--qa-unconfigured');
+const qa = process.argv.includes('--qa') || unconfiguredQa;
+const sourceMode = qa && !unconfiguredQa ? 'demo' : 'discord';
 const qaOutput = process.env.DISCORD_EXPORTER_QA;
 if (qa && (!qaOutput || !isAbsolute(qaOutput) || home !== resolve(qaOutput, 'state') || process.env.DISCORD_BOT_TOKEN)) {
   console.error('Desktop QA requires an isolated state directory and no Discord token.');
@@ -25,20 +27,20 @@ const action = {
   clearToken: async () => { await clearToken(); return await credentialStatus(); },
   revealToken: savedToken,
   check: async () => (await source('discord')).identity(),
-  guilds: async mode => (await source(mode)).guilds(),
-  channels: async ({ mode, id, archived, generation }) => (await source(mode)).catalog(id, { archived, progress: data => {
+  guilds: async () => (await source(sourceMode)).guilds(),
+  channels: async ({ id, archived, generation }) => (await source(sourceMode)).catalog(id, { archived, progress: data => {
     if (win && !win.isDestroyed()) win.webContents.send('archive:progress', { ...data, generation });
   } }),
-  channel: async ({ mode, id }) => (await source(mode)).channel(channelId(id)),
-  preview: async ({ mode, id }) => preview(mode, id),
-  history,
+  channel: async id => (await source(sourceMode)).channel(channelId(id)),
+  preview: async id => preview(sourceMode, id),
+  history: async () => (await history()).filter(item => item.source === sourceMode),
   folder: async current => {
     const result = await dialog.showOpenDialog(win, { defaultPath: current, properties: ['openDirectory', 'createDirectory'] });
     return result.canceled ? null : result.filePaths[0];
   },
   copy: value => clipboard.writeText(value),
   openFolder: async jobId => {
-    const item = (await history()).find(item => item.jobId === jobId);
+    const item = (await action.history()).find(item => item.jobId === jobId);
     if (!item || !isAbsolute(item.output)) throw new Problem('NOT_FOUND', 'This export is no longer in recent history.');
     const directory = await stat(item.output).catch(() => null);
     if (!directory?.isDirectory()) throw new Problem('OPEN_FAILED', 'The export folder has been moved or removed.');
@@ -46,10 +48,10 @@ const action = {
     if (error) throw new Problem('OPEN_FAILED', 'Could not open this export folder.');
   },
   export: async input => {
-    const job = await prepareExport(input, await settings());
+    const job = await prepareExport({ ...input, mode: sourceMode }, await settings());
     return await launchJob(job.id);
   },
-  jobs: listJobs,
+  jobs: () => listJobs(sourceMode),
   job: jobStatus,
   pause: pauseJob,
   resume: launchJob,
@@ -79,7 +81,22 @@ else {
       }
     });
     await win.loadFile(join(here, 'index.html'));
-    if (qa) {
+    if (unconfiguredQa) {
+      const { mkdir, writeFile } = await import('node:fs/promises');
+      const evidence = await win.webContents.executeJavaScript(`(async () => {
+        const status = document.querySelector('#catalog-status');
+        for (let i = 0; i < 60 && !status.textContent.includes('Add a Discord bot token'); i++)
+          await new Promise(resolve => setTimeout(resolve, 50));
+        return status.textContent.includes('Add a Discord bot token') &&
+          !document.body.innerText.includes('Sample archive') &&
+          document.querySelector('#submit-export').disabled;
+      })()`);
+      if (!evidence) throw new Error('Unconfigured desktop did not show Discord setup guidance.');
+      await mkdir(qaOutput, { recursive: true });
+      await win.capturePage();
+      await writeFile(join(qaOutput, 'unconfigured.png'), (await win.capturePage()).toPNG());
+      app.exit(0);
+    } else if (qa) {
       try {
         const script = await readFile(join(root, 'scripts', 'desktop-qa.cjs'), 'utf8');
         const evidence = await win.webContents.executeJavaScript(script);
