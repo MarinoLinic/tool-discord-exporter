@@ -7,7 +7,7 @@ const formatChoices = [
 ];
 const fields = [
   ['attachments', 'Attachment references'], ['replies', 'Reply links'], ['edits', 'Edit timestamps'],
-  ['embeds', 'Link previews'], ['reactions', 'Reactions'], ['mentions', 'Mention IDs'],
+  ['reactions', 'Reactions'], ['mentions', 'Mention IDs'],
   ['stickers', 'Stickers'], ['polls', 'Polls'], ['metadata', 'Message flags'],
 ];
 const defaultFields = new Set(['attachments', 'replies', 'edits']);
@@ -147,6 +147,7 @@ function applyDefaults(config) {
   $('#default-format').value = config.format;
   for (const input of $$('input[name=format]')) input.checked = input.value === config.format || (config.format === 'html' && input.value === 'json');
   $('#default-attachments').checked = $('#attachments').checked = config.attachments;
+  $('#default-embeds').checked = $('#embeds').checked = config.embeds;
   $('#file-cap').value = config.attachmentMiB;
   $('#job-cap').value = config.budgetMiB;
   $('#show-preview').checked = config.showPreview;
@@ -385,7 +386,7 @@ function inputOptions() {
     formats: $$('input[name=format]:checked').map(input => input.value),
     fields: $$('#detail-options input:checked').map(input => input.value), name: $('#archive-name').value.trim(),
     since: $('#since').value, until: $('#until').value, contains: $('#contains').value, limit: Number($('#limit').value),
-    attachments: $('#attachments').checked, output: $('#output').value,
+    attachments: $('#attachments').checked, embeds: $('#embeds').checked, output: $('#output').value,
     attachmentMiB: ui.config.attachmentMiB, budgetMiB: ui.config.budgetMiB,
   };
 }
@@ -403,7 +404,7 @@ function command() {
     ['attachment-mib', config.attachmentMiB], ['budget-mib', config.budgetMiB]]) {
     if (value !== '') args.push(quote('--' + flag + '=' + value));
   }
-  args.push(config.attachments ? '--attachments' : '--no-attachments', '--background', '--print-json');
+  args.push(config.attachments ? '--attachments' : '--no-attachments', config.embeds ? '--embeds' : '--no-embeds', '--background', '--print-json');
   return args.join(' ');
 }
 function renderCommand() {
@@ -445,7 +446,7 @@ function busy(value) {
   updateSelection();
 }
 
-const stages = { prepare: 'Preparing', discover: 'Finding threads', fetch: 'Reading messages', media: 'Saving attachments', write: 'Writing transcripts', publish: 'Publishing' };
+const stages = { prepare: 'Preparing', discover: 'Finding threads', fetch: 'Reading messages', media: 'Saving media', write: 'Writing transcripts', publish: 'Publishing' };
 const formatCount = value => Number(value || 0).toLocaleString('en-US');
 function jobCard(job) {
   const card = el('article', undefined, 'job-card');
@@ -468,6 +469,8 @@ function jobCard(job) {
   card.append(el('p', counts + (job.channel && job.stage !== 'discover' ? ' · #' + job.channel.name : ''), 'field-note'));
   if (job.attachments?.downloaded) card.append(el('p', formatCount(job.attachments.downloaded) + ' attachments · ' +
     (job.attachments.bytes / 1048576).toFixed(1) + ' MiB', 'field-note'));
+  if (job.embeds?.downloaded) card.append(el('p', formatCount(job.embeds.downloaded) + ' embed previews · ' +
+    (job.embeds.bytes / 1048576).toFixed(1) + ' MiB', 'field-note'));
   if (job.detail) card.append(el('p', job.detail, 'field-note'));
   const running = ['running', 'queued'].includes(job.state);
   const button = el('button', running ? 'Pause' : 'Resume', 'ghost');
@@ -586,6 +589,7 @@ async function start() {
     const config = await call('saveSettings', {
       output: $('#default-output').value, format: $('#default-format').value,
       limit: Number($('#default-limit').value), attachments: $('#default-attachments').checked,
+      embeds: $('#default-embeds').checked,
       attachmentMiB: Number($('#file-cap').value), budgetMiB: Number($('#job-cap').value), showPreview: $('#show-preview').checked,
     });
     applyDefaults(config);

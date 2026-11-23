@@ -10,7 +10,7 @@ export const formats = ['html', 'jsonl', 'markdown', 'json'];
 const credential = join(home, 'bot.dpapi');
 export const defaults = {
   output: join(home, 'exports'), format: 'html', limit: 0,
-  attachments: false, attachmentMiB: 25, budgetMiB: 256, showPreview: true,
+  attachments: false, embeds: true, attachmentMiB: 25, budgetMiB: 256, showPreview: true,
 };
 
 export class Problem extends Error {
@@ -54,8 +54,8 @@ export function settingsValues(input) {
     if (!Number.isInteger(value[key]) || value[key] < min || value[key] > max)
       throw new Problem('INVALID_OPTIONS', key + ' must be an integer from ' + min + ' to ' + max + '.', 2);
   }
-  if (typeof value.attachments !== 'boolean' || typeof value.showPreview !== 'boolean')
-    throw new Problem('INVALID_OPTIONS', 'Expected true or false for attachment and preview settings.', 2);
+  if (['attachments', 'embeds', 'showPreview'].some(key => typeof value[key] !== 'boolean'))
+    throw new Problem('INVALID_OPTIONS', 'Expected true or false for attachment, embed, and preview settings.', 2);
   return value;
 }
 

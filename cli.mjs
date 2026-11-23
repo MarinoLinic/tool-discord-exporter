@@ -38,6 +38,7 @@ const help = [
   'Export options: --format html|jsonl|markdown|json, --output DIRECTORY,',
   '  --since YYYY-MM-DD, --until YYYY-MM-DD, --contains TEXT, --limit COUNT,',
   '  --after-id ID, --attachments, --no-attachments, --attachment-mib N, --budget-mib N.',
+  '  --embeds or --no-embeds controls embed details and offline preview media (on by default).',
   '  Repeat --format to write multiple outputs. Set --fields LIST for optional archive details.',
   '  Use --name FOLDER to name the bundle or --background to detach an export or resume.',
   '  Use channels --archived to include accessible archived threads in discovery.',
@@ -50,9 +51,9 @@ const specs = {
   jobs: [], status: ['job'], pause: ['job'], resume: ['job', 'background', 'quiet'], worker: ['job', 'quiet'],
   check: ['demo', 'profile'], guilds: ['demo', 'profile'], channels: ['demo', 'guild', 'archived', 'profile'], preview: ['demo', 'channel', 'profile'],
   export: ['demo', 'profile', 'channel', 'guild', 'format', 'output', 'since', 'until', 'contains', 'limit', 'name', 'fields', 'background',
-    'after-id', 'attachments', 'no-attachments', 'attachment-mib', 'budget-mib', 'quiet'],
+    'after-id', 'attachments', 'no-attachments', 'embeds', 'no-embeds', 'attachment-mib', 'budget-mib', 'quiet'],
 };
-const typeOf = key => ['demo', 'attachments', 'no-attachments', 'quiet', 'help', 'print-json', 'background', 'archived'].includes(key) ? 'boolean' : 'string';
+const typeOf = key => ['demo', 'attachments', 'no-attachments', 'embeds', 'no-embeds', 'quiet', 'help', 'print-json', 'background', 'archived'].includes(key) ? 'boolean' : 'string';
 const specFor = key => ({ type: typeOf(key), ...(['channel', 'format'].includes(key) ? { multiple: true } : {}) });
 const args = process.argv.slice(2);
 const json = args.includes('--print-json');
@@ -122,6 +123,8 @@ async function dispatch(command, flags) {
     const config = await settings();
     if (flags.attachments && flags['no-attachments'])
       throw new Problem('INVALID_OPTIONS', 'Choose only one attachment mode.', 2);
+    if (flags.embeds && flags['no-embeds'])
+      throw new Problem('INVALID_OPTIONS', 'Choose only one embed mode.', 2);
     const options = {
       channels: flags.channel, guild: flags.guild, mode, name: flags.name, profileId: flags.profile,
       format: flags.format?.[0] ?? config.format, formats: flags.format,
@@ -130,6 +133,7 @@ async function dispatch(command, flags) {
       since: flags.since, until: flags.until, contains: flags.contains, afterId: flags['after-id'],
       limit: number(flags.limit, '--limit') ?? config.limit,
       attachments: flags.attachments ?? (flags['no-attachments'] ? false : config.attachments),
+      embeds: flags.embeds ?? (flags['no-embeds'] ? false : undefined),
       attachmentMiB: number(flags['attachment-mib'], '--attachment-mib') ?? config.attachmentMiB,
       budgetMiB: number(flags['budget-mib'], '--budget-mib') ?? config.budgetMiB,
     };

@@ -5,6 +5,18 @@ const safeUrl = value => {
   catch { return ''; }
 };
 const attachmentLink = file => file.path ? file.path : safeUrl(file.url);
+const mdLink = (url, title) => '[' + md(title) + '](' + url.replace(/[()<>\s]/g, char => encodeURIComponent(char)) + ')';
+function markdownEmbeds(embeds, prefix) {
+  if (!embeds?.length) return '';
+  return embeds.map(embed => {
+    const url = safeUrl(embed.url) || safeUrl(embed.video?.url);
+    const title = embed.title || embed.provider?.name || 'Embed';
+    const preview = [...new Set(Object.values(embed.media ?? {}).map(item => item.path).filter(Boolean))];
+    return '- Embed: ' + (url ? mdLink(url, title) : md(title)) + '\n' +
+      (embed.description ? block(embed.description) + '\n' : '') +
+      preview.map(path => '  - ' + mdLink(prefix + path, 'Offline media') + '\n').join('');
+  }).join('\n') + '\n';
+}
 const authorName = message => message.author?.displayName ?? 'Unknown author';
 const label = channel => '#' + channel.name;
 const md = value => String(value ?? '').replace(/[\\\x60*_[\]{}<>#+!|&]/g, '\\$&');
@@ -28,7 +40,8 @@ export function createTranscript(format, channel, source, options = {}) {
       message.attachments.map(file => {
         const href = attachmentLink(file).replace(/[()<>\s]/g, char => encodeURIComponent(char));
         return '- ' + (href ? '[' + md(file.name) + '](' + href + ')' : md(file.name)) + ' · ' + file.status + '\n';
-      }).join('') + (message.attachments.length ? '\n' : ''),
+      }).join('') + (message.attachments.length ? '\n' : '') +
+      (options.fields?.includes('embeds') ? markdownEmbeds(message.embeds, options.prefix || '') : ''),
   };
   return htmlTranscript(channel, source, options);
 }

@@ -79,6 +79,8 @@ async function verifyDesktop() {
     if (messages !== 4) throw new Error('Rendered transcript message count mismatch.');
     const imageLoaded = await reader.webContents.executeJavaScript("new Promise(resolve=>{const img=document.querySelector('.file img'); if(!img) resolve(false); else { img.loading='eager'; img.decode().then(()=>resolve(img.naturalWidth>0),()=>resolve(false)); }})");
     if (!imageLoaded) throw new Error('Offline attachment did not render.');
+    const embedLoaded = await reader.webContents.executeJavaScript("new Promise(resolve=>{const img=document.querySelector('.embed img.embed-media'); if(!img) resolve(false); else { img.loading='eager'; img.decode().then(()=>resolve(img.naturalWidth>0 && img.getAttribute('src').startsWith('assets/embeds/')),()=>resolve(false)); }})");
+    if (!embedLoaded) throw new Error('Offline embed thumbnail did not render.');
     const color = await reader.webContents.executeJavaScript("getComputedStyle(document.body).backgroundColor");
     if (color !== 'rgb(34, 38, 44)') throw new Error('Offline archive stylesheet did not load.');
     await writeFile(join(destination, 'transcript.png'), (await reader.capturePage()).toPNG());

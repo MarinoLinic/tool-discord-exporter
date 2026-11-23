@@ -70,21 +70,25 @@
   if (find('#selection-count').textContent !== '2 selected') throw new Error('Filtered selection failed.');
   if (!find('#formats input[value=html]').checked || !find('#formats input[value=json]').checked)
     throw new Error('Default dual formats are missing.');
+  if (!find('#embeds').checked) throw new Error('Embeds should be enabled by default.');
   find('#archive-name').value = 'Field Archive Export';
   find('#submit-export').click();
   await until(() => find('#job').textContent.includes('Saved 6 messages'), 'background dual-format export');
   find('#tab-history').click();
   await until(() => find('#history-list').textContent.includes('HTML + JSON'), 'shared history');
   find('#tab-automation').click();
-  for (const flag of ['--profile=1200000000000000301', '--format=html', '--format=json', '--background', '--print-json']) {
+  for (const flag of ['--profile=1200000000000000301', '--format=html', '--format=json', '--embeds', '--background', '--print-json']) {
     if (!find('#command').textContent.includes(flag)) throw new Error('CLI command missing ' + flag);
   }
   if (find('#command').textContent.includes('--demo')) throw new Error('Desktop command must target Discord.');
   find('#tab-settings').click();
+  if (!find('#default-embeds').checked) throw new Error('Embed settings default should be enabled.');
+  find('#default-embeds').click();
   find('#default-limit').value = '42';
   find('#settings-form button[type=submit]').click();
   await until(() => find('#notice').textContent === 'Export defaults saved.', 'settings save');
-  if (find('#limit').value !== '42') throw new Error('Settings did not apply.');
+  if (find('#limit').value !== '42' || find('#embeds').checked) throw new Error('Settings did not apply.');
+  find('#default-embeds').click();
   find('#default-limit').value = '';
   find('#default-output').value = 'C:' + String.fromCharCode(92) + 'Discord Archives';
   find('#settings-form button[type=submit]').click();

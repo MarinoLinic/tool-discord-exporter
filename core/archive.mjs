@@ -1,5 +1,5 @@
 export const jsonFields = {
-  defaults: ['attachments', 'replies', 'edits'],
+  defaults: ['attachments', 'replies', 'edits', 'embeds'],
   all: ['attachments', 'replies', 'edits', 'embeds', 'reactions', 'mentions', 'stickers', 'polls', 'metadata'],
 };
 
@@ -56,6 +56,7 @@ export const archiveCss = [
   '.avatar{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;color:#192b2b;background:#8ecac1;font:650 14px "Segoe UI",sans-serif}.avatar.t1{background:#e5bd84;color:#382919}.avatar.t2{background:#aeb8e5;color:#242a46}.avatar.t3{background:#d8b2bf;color:#352630}',
   '.body{min-width:0}.body .text{white-space:pre-wrap;overflow-wrap:anywhere}.body strong{color:#f6f6f7}.bot{margin-left:7px;border-radius:4px;background:#423a50;color:#efe6fa;padding:1px 5px;font-size:10px;font-weight:700}',
   '.reply,.edited{font-size:12px;color:var(--muted)}.reply{display:block;margin-bottom:3px}.file{display:block;width:fit-content;max-width:100%;padding:8px;border:1px solid var(--line);background:#282d35;border-radius:8px;margin-top:8px}.file img,.file video{display:block;max-width:min(100%,520px);max-height:330px;object-fit:contain;margin-bottom:5px;border-radius:5px}.file audio{max-width:100%}',
+  '.embed{max-width:min(100%,560px);width:fit-content;margin-top:8px;padding:11px 14px;background:var(--rail);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:7px;overflow-wrap:anywhere}.embed-provider,.embed-footer{color:var(--muted);font-size:12px}.embed-title{display:block;margin:3px 0 2px;font-weight:700}.embed .text{font-size:14px}.embed img.embed-media,.embed video{display:block;max-width:100%;max-height:290px;object-fit:contain;border-radius:5px;margin-top:8px}.embed-fields{display:grid;gap:7px;margin:7px 0;font-size:13px}.embed-fields dd{margin:0}.embed-fields dt{font-weight:700}.embed-attribution{display:flex;align-items:center;gap:5px}.embed-icon{width:18px;height:18px;border-radius:50%;object-fit:cover}',
   '.chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}.chip{color:var(--ink);font-size:12px;border:1px solid var(--line);background:var(--raised);padding:2px 6px;border-radius:5px}.intro{margin-bottom:15px}.intro h1{font-size:37px;color:var(--accent);margin-bottom:3px}.directory h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:24px 0 5px}',
   '.directory ul{padding:0;list-style:none;margin:0;border-top:1px solid var(--line)}.directory li a{display:flex;gap:14px;justify-content:space-between;text-decoration:none;padding:8px 10px;border-bottom:1px solid var(--line)}.directory li a:hover{background:var(--raised)}.directory li small{white-space:nowrap}',
   '@media(max-width:700px){.frame{display:block}.rail{display:none}.stream{padding:13px 10px 40px}.top{padding:11px 12px}.message{gap:8px;padding-left:2px;grid-template-columns:34px minmax(0,1fr)}.avatar{height:32px;width:32px;font-size:12px}.intro h1{font-size:30px}}',
@@ -94,6 +95,29 @@ function renderFile(file, prefix) {
   return '<div class="file">' + media +
     (href ? '<a href="' + path + '" rel="noreferrer"' + (file.path ? ' download' : '') + '>' + name + '</a>' : name) +
     (file.status !== 'downloaded' ? ' <small>· ' + esc(file.status) + '</small>' : '') + '</div>';
+}
+
+function renderEmbed(embed, prefix) {
+  const media = embed.media ?? {};
+  const url = safeUrl(embed.url) || safeUrl(embed.video?.url);
+  const title = embed.title || embed.author?.name || (url && new URL(url).hostname);
+  const image = asset => asset?.path && /^image\//.test(asset.contentType) ? esc(prefix + assetUrl(asset.path)) : '';
+  const showIcon = asset => image(asset) ? '<img class="embed-icon" src="' + image(asset) + '" alt="" loading="lazy">' : '';
+  const attribution = (value, icon) => (value?.name ? '<div class="embed-attribution">' + showIcon(icon) +
+    (safeUrl(value.url) ? anchor(safeUrl(value.url), value.name) : esc(value.name)) + '</div>' : '');
+  const preview = [...new Set([image(media.image), image(media.thumbnail)].filter(Boolean))]
+    .map(path => '<img class="embed-media" src="' + path + '" alt="" loading="lazy">').join('');
+  const video = media.video?.path && /^video\//.test(media.video.contentType)
+    ? '<video controls preload="none" src="' + esc(prefix + assetUrl(media.video.path)) + '"></video>' : '';
+  const fields = (embed.fields ?? []).map(field => '<div><dt>' + esc(field.name) + '</dt><dd class="text">' + textHtml(field.value) + '</dd></div>').join('');
+  const description = embed.description ? '<p class="text">' + textHtml(embed.description) + '</p>' : '';
+  const provider = embed.provider?.name ? '<div class="embed-provider">' + esc(embed.provider.name) + '</div>' : '';
+  const author = embed.author?.name !== title ? attribution(embed.author, media.authorIcon) : '';
+  const footer = embed.footer?.text ? '<div class="embed-footer embed-attribution">' + showIcon(media.footerIcon) + esc(embed.footer.text) + '</div>' : '';
+  const heading = title ? '<div class="embed-title">' + (url ? anchor(url, title) : esc(title)) + '</div>' : '';
+  if (!heading && !description && !fields && !footer && !preview && !video) return '';
+  return '<aside class="embed" aria-label="Embed">' + provider + author + heading + description +
+    (fields ? '<dl class="embed-fields">' + fields + '</dl>' : '') + video + preview + footer + '</aside>';
 }
 
 const dateText = new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'UTC' });
@@ -136,13 +160,7 @@ export function htmlTranscript(channel, mode, options) {
       if (message.content) markup += '<p class="text">' + textHtml(message.content) +
         (fields.has('edits') && message.editedTimestamp ? ' <span class="edited">(edited)</span>' : '') + '</p>';
       if (fields.has('attachments')) markup += message.attachments.map(file => renderFile(file, prefix)).join('');
-      if (fields.has('embeds')) {
-        for (const embed of message.embeds) if (embed.title || embed.url || embed.description) {
-          const url = safeUrl(embed.url);
-          markup += '<div class="file">' + (url ? anchor(url, embed.title || url) : esc(embed.title)) +
-            (embed.description ? '<p class="text">' + textHtml(embed.description) + '</p>' : '') + '</div>';
-        }
-      }
+      if (fields.has('embeds')) markup += (message.embeds ?? []).map(embed => renderEmbed(embed, prefix)).join('');
       if (fields.has('reactions') && message.reactions.length) markup += '<div class="chips">' +
         message.reactions.map(value => '<span class="chip">' + esc(value.emoji?.name || 'Reaction') + ' ' + esc(value.count) + '</span>').join('') + '</div>';
       return markup + '</div></article>\n';

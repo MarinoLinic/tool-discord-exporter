@@ -11,6 +11,7 @@ import { archiveIndex, archiveCss, compactMessage, jsonFields } from './archive.
 import { channelId, isId, normalizeMessage, source } from './source.mjs';
 import { createTranscript } from './formats.mjs';
 import { profileId, profiles } from './profiles.mjs';
+import { embedMediaUrl, embedReferences, embedTypes, withSavedEmbedAssets } from './embeds.mjs';
 
 const epoch = 1420070400000;
 function dateValue(value, name) {
@@ -24,7 +25,7 @@ function dateValue(value, name) {
 }
 
 export function exportOptions(input, defaults) {
-  const config = settingsValues({ ...defaults, ...input });
+  const config = settingsValues({ ...defaults, ...input, embeds: input.embeds ?? defaults.embeds });
   const selected = Array.isArray(input.channels) ? [...new Set(input.channels.map(channelId))] : [];
   if ((!selected.length && !input.guild) || selected.length > 5000 || (selected.length && input.guild))
     throw new Problem('INVALID_CHANNEL', 'Select up to 5,000 channels or choose an entire server.', 2);
@@ -35,6 +36,10 @@ export function exportOptions(input, defaults) {
   const fields = input.fields ?? jsonFields.defaults;
   if (!Array.isArray(fields) || fields.some(value => !jsonFields.all.includes(value)))
     throw new Problem('INVALID_OPTIONS', 'Choose supported JSON detail fields.', 2);
+  const embeds = input.embeds ?? (input.fields === undefined ? config.embeds : fields.includes('embeds'));
+  const includedFields = new Set(fields);
+  if (embeds) includedFields.add('embeds');
+  else includedFields.delete('embeds');
   const since = dateValue(input.since, 'Start date');
   const until = dateValue(input.until, 'End date');
   if (since !== null && until !== null && since > until)
@@ -44,9 +49,9 @@ export function exportOptions(input, defaults) {
   const contains = input.contains ?? '';
   if (typeof contains !== 'string' || contains.length > 300)
     throw new Problem('INVALID_OPTIONS', 'Search text must be 300 characters or fewer.', 2);
-  return { ...config, channels: selected, since, until: until === null ? null : until + 86_400_000,
+  return { ...config, embeds, channels: selected, since, until: until === null ? null : until + 86_400_000,
     contains: contains.trim(), afterId: input.afterId || null, mode: input.mode ?? 'discord', formats: selectedFormats,
-    fields: [...new Set(fields)], guild: input.guild ?? null, catalog: Array.isArray(input.catalog) ? input.catalog : [], name: input.name,
+    fields: [...includedFields], guild: input.guild ?? null, catalog: Array.isArray(input.catalog) ? input.catalog : [], name: input.name,
     profileId: profileId(input.profileId) };
 }
 
@@ -74,33 +79,46 @@ function attachmentName(file) {
   return safeName(file.id).slice(0, 40) + '-' + stem + suffix;
 }
 
-async function attachment(file, folder, counts, options, signal, fetcher) {
-  const max = Math.min(options.attachmentMiB * 1048576, options.budgetMiB * 1048576 - counts.bytes);
+function attachmentUrl(input) {
+  try {
+    const url = new URL(input);
+    if (url.protocol === 'https:' && !url.port && !url.username && !url.password &&
+        ['cdn.discordapp.com', 'media.discordapp.net'].includes(url.hostname) &&
+        url.pathname.startsWith('/attachments/')) return url;
+  } catch { /* An unusable attachment URL is reported in the archive. */ }
+  return null;
+}
+
+async function downloadAsset(file, folder, counts, max, options, signal, fetcher) {
+  const embed = file.kind === 'embed';
   const skip = status => { counts.skipped++; return { ...file, status }; };
-  if (!options.attachments) return { ...file, status: 'reference' };
-  const fixture = options.mode === 'demo' ? (await import('../fixtures/discord-demo.mjs')).attachmentFixture(file.id) : null;
+  const fixture = options.mode === 'demo' ? (await import('../fixtures/discord-demo.mjs')).attachmentFixture(file.id, file.url) : null;
   if (options.mode === 'demo' && !fixture) return skip('sample');
   if (max <= 0 || (Number.isFinite(file.size) && file.size > max)) return skip('size-limit');
-  let url;
-  try { url = new URL(file.url); } catch { return skip('unsupported-url'); }
-  if (url.protocol !== 'https:' || url.port || url.username || url.password ||
-      !['cdn.discordapp.com', 'media.discordapp.net'].includes(url.hostname) ||
-      !url.pathname.startsWith('/attachments/')) return skip('unsupported-url');
-  const name = attachmentName(file);
-  const dir = join(folder, 'assets');
+  const urls = embed ? file.urls.map(embedMediaUrl).filter(Boolean) : [attachmentUrl(file.url)].filter(Boolean);
+  if (!urls.length) return skip('unsupported-url');
+  const relativeDirectory = embed ? 'assets/embeds' : 'assets';
+  const dir = join(folder, relativeDirectory);
   await mkdir(dir, { recursive: true });
-  const temporary = join(dir, '.attachment-' + safeName(file.id) + '.part');
+  const temporary = join(dir, (embed ? '.embed-' : '.attachment-') + safeName(file.id) + '.part');
   let bytes = 0;
   let exceeded = false;
   try {
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(90_000)]);
-    const response = fixture
-      ? new Response(await readFile(fixture))
-      : await fetcher(url, { redirect: 'error', signal: requestSignal });
-    if (!response.ok || !response.body) {
+    let response, contentType;
+    let failure = 'unavailable';
+    for (const url of urls) {
+      response = fixture
+        ? new Response(await readFile(fixture), { headers: { 'Content-Type': 'image/png' } })
+        : await fetcher(url, { redirect: 'error', signal: requestSignal });
+      contentType = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase();
+      if (!response.ok || !response.body) failure = 'http-' + response.status;
+      else if (embed && (!embedTypes.has(contentType) || !contentType.startsWith(file.mediaClass + '/'))) failure = 'unsupported-media';
+      else { failure = ''; break; }
       await response.body?.cancel();
-      return skip('http-' + response.status);
     }
+    if (failure) return skip(failure);
+    const name = embed ? file.id + '.' + embedTypes.get(contentType) : attachmentName(file);
     if (Number(response.headers.get('Content-Length')) > max) {
       await response.body.cancel();
       return skip('size-limit');
@@ -116,7 +134,8 @@ async function attachment(file, folder, counts, options, signal, fetcher) {
     await rename(temporary, join(dir, name));
     counts.bytes += bytes;
     counts.downloaded++;
-    return { ...file, size: bytes, path: 'assets/' + name, status: 'downloaded' };
+    return { ...file, size: bytes, path: relativeDirectory + '/' + name, status: 'downloaded',
+      ...(embed ? { contentType } : {}) };
   } catch (error) {
     await rm(temporary, { force: true });
     signal.throwIfAborted();
@@ -250,6 +269,7 @@ export async function runJob(id, hooks = {}) {
     const fixes = [];
     for (const { data } of db.prepare('SELECT data FROM assets').iterate()) {
       const file = JSON.parse(data);
+      if (file.kind === 'embed') continue;
       const nextPath = 'assets/' + attachmentName(file);
       if (file.status === 'downloaded' && file.path !== nextPath) fixes.push({ file, nextPath });
     }
@@ -276,10 +296,17 @@ export async function runJob(id, hooks = {}) {
       db.exec('COMMIT');
     }
     const counts = { downloaded: 0, skipped: 0, bytes: 0 };
+    const embedCounts = { downloaded: 0, skipped: 0, bytes: 0 };
+    const downloadEmbeds = options.embeds === true;
+    const includeEmbeds = options.fields.includes('embeds');
+    const mediaBytes = () => counts.bytes + embedCounts.bytes;
+    const perFile = options.attachmentMiB * 1048576;
+    const budget = options.budgetMiB * 1048576;
     for (const { data } of db.prepare('SELECT data FROM assets').iterate()) {
       const file = JSON.parse(data);
-      if (file.status === 'downloaded') { counts.downloaded++; counts.bytes += file.size; }
-      else if (file.status !== 'reference') counts.skipped++;
+      const target = file.kind === 'embed' ? embedCounts : counts;
+      if (file.status === 'downloaded') { target.downloaded++; target.bytes += file.size; }
+      else if (file.status !== 'reference') target.skipped++;
     }
     const results = [];
     const inaccessible = [...catalog.inaccessible];
@@ -298,7 +325,7 @@ export async function runJob(id, hooks = {}) {
       const reportChannel = (patch, force = false) => report({
         channel, completed: results.length + inaccessible.length - catalog.inaccessible.length,
         total: catalog.channels.length, messages: messages + cp.matched, matched: cp.matched, scanned: cp.scanned,
-        attachments: { ...counts }, ...patch,
+        attachments: { ...counts }, embeds: { ...embedCounts }, ...patch,
       }, force);
       await reportChannel({ stage: cp.fetchDone ? 'write' : 'fetch', written: 0 }, true);
       try {
@@ -342,13 +369,15 @@ export async function runJob(id, hooks = {}) {
         continue;
       }
 
-      // Resolve attachment copies once before writing any format.
-      if (options.attachments && !cp.mediaDone) {
+      // Resolve media once before writing any format.
+      if ((options.attachments || downloadEmbeds) && !cp.mediaDone) {
         let written = 0;
         const pending = new Map();
         async function download(file, messageID) {
-          let stored = await attachment(file, staging, counts, options, signal, fetcher);
-          if (/^http-(?:401|403|404)$/.test(stored.status) && provider.message) {
+          const target = file.kind === 'embed' ? embedCounts : counts;
+          const save = item => downloadAsset(item, staging, target, Math.min(perFile, budget - mediaBytes()), options, signal, fetcher);
+          let stored = await save(file);
+          if (file.kind !== 'embed' && /^http-(?:401|403|404)$/.test(stored.status) && provider.message) {
             const fresh = await provider.message(channelID, messageID).catch(error => {
               if (['NOT_FOUND', 'ACCESS_DENIED'].includes(error.code)) return null;
               throw error;
@@ -356,7 +385,7 @@ export async function runJob(id, hooks = {}) {
             const replacement = fresh?.attachments?.find(entry => entry.id === file.id);
             if (replacement?.url && replacement.url !== file.url) {
               counts.skipped--;
-              stored = await attachment({ ...file, url: replacement.url }, staging, counts, options, signal, fetcher);
+              stored = await save({ ...file, url: replacement.url });
             }
           }
           saveAsset.run(file.id, quoteSql(stored));
@@ -369,11 +398,15 @@ export async function runJob(id, hooks = {}) {
           await reportChannel({ stage: 'media', written });
         }
         // Keep four CDN transfers in flight only while the remaining budget can safely fit four full-size files.
-        const slots = () => counts.bytes + 4 * options.attachmentMiB * 1048576 <= options.budgetMiB * 1048576 ? 4 : 1;
+        const slots = () => mediaBytes() + 4 * perFile <= budget ? 4 : 1;
         for (const { row } of readRows.iterate(channelID)) {
           signal.throwIfAborted();
           const item = JSON.parse(row);
-          for (const file of item.attachments) {
+          const files = options.attachments ? [...item.attachments] : [];
+          if (downloadEmbeds) for (const embed of item.embeds) {
+            for (const { file } of embedReferences(embed)) files.push(file);
+          }
+          for (const file of files) {
             if (lookupAsset.get(file.id) || pending.has(file.id)) continue;
             pending.set(file.id, { file, messageID: item.id });
             if (pending.size >= slots()) await flush();
@@ -401,6 +434,11 @@ export async function runJob(id, hooks = {}) {
               const row = lookupAsset.get(ref.id);
               return row ? JSON.parse(row.data) : { ...ref, status: 'reference' };
             });
+            if (includeEmbeds) item.embeds = item.embeds.map(embed => withSavedEmbedAssets(embed, id => {
+              const saved = lookupAsset.get(id);
+              return saved ? JSON.parse(saved.data) : null;
+            }));
+            else delete item.embeds;
             yield writer.row(item, i++);
             if (i % 200 === 0) {
               await reportChannel({ stage: 'write', format, written: i });
@@ -422,6 +460,7 @@ export async function runJob(id, hooks = {}) {
       await reportChannel({ stage: 'write', messages }, true);
     }
     if (counts.skipped) warnings.add('Some attachments were unavailable or above configured limits. See attachment status.');
+    if (embedCounts.skipped) warnings.add('Some embed previews could not be saved offline. Embed details remain in the transcripts.');
     if (results.some(value => value.blank) && options.mode === 'discord') warnings.add('Some standard messages returned empty content. Confirm the bot has Message Content intent if substantial text is missing.');
     if (results.some(value => !value.scanned) && options.mode === 'discord' && !selection.since && !selection.until && !selection.afterId)
       warnings.add('Discord returned no messages for some readable channels.');
@@ -451,7 +490,8 @@ export async function runJob(id, hooks = {}) {
     const manifest = {
       schemaVersion: 2, jobId: id, name, source: options.mode, format: options.formats[0], formats: options.formats,
       startedAt, finishedAt: new Date().toISOString(), output, messageCount: messages, selection, guild: catalog.guild,
-      jsonFields: options.fields, channels: results, attachments: counts, warnings: [...warnings], inaccessibleChannels: inaccessible,
+      jsonFields: options.fields, channels: results, attachments: counts, embeds: { included: includeEmbeds, ...embedCounts },
+      warnings: [...warnings], inaccessibleChannels: inaccessible,
       ...(config.botProfile ? { botProfile: config.botProfile } : {}),
     };
     await writeFile(join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

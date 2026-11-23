@@ -71,3 +71,8 @@
 #token-form .action-row .field-note { margin: 0; }
 @media (max-width: 550px) { .connection-grid { grid-template-columns: minmax(0, 1fr); } }
 .credential-editor { margin-top: 10px; }
+
+.media-options { margin: 10px 0; }
+.media-options legend { margin-bottom: 4px; }
+.media-options label { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; font-size: 13px; }
+.media-options .field-note { margin-top: 4px; }

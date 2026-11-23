@@ -66,7 +66,12 @@
             <label class="field">Contains text<input id="contains" maxlength="300" placeholder="Any message"></label><label class="field">Newest per channel<input id="limit" type="number" min="0" max="10000000" placeholder="All matches"></label>
           </div>
           <p class="field-note">Dates include the entire day in UTC.</p>
-          <div class="attachment-line"><label><input type="checkbox" id="attachments"> Download attachment files</label><span id="attachment-note"></span></div>
+          <fieldset class="media-options">
+            <legend>Download media</legend>
+            <label><input type="checkbox" id="embeds" checked> Embeds and link previews</label>
+            <label><input type="checkbox" id="attachments"> Attachment files</label>
+            <p class="field-note" id="attachment-note"></p>
+          </fieldset>
           <div class="field output-field"><label for="output">Save to</label><div class="input-row"><input id="output" required spellcheck="false"><button class="icon-button ghost" id="choose-output" type="button" aria-label="Choose output folder"><svg aria-hidden="true"><use href="#folder"/></svg></button></div></div>
           <label class="field archive-name">Archive folder name<input id="archive-name" maxlength="100" placeholder="Automatic"></label>
           <div class="run-row"><button type="submit" class="primary" id="submit-export"><svg aria-hidden="true"><use href="#arrow"/></svg><span>Start export</span></button><button type="button" class="ghost" id="show-message-preview">Preview</button><button type="button" class="text-button" id="copy-export">Copy CLI command</button></div>
@@ -112,6 +117,7 @@
           <div class="field"><label for="default-output">Output folder</label><div class="input-row"><input id="default-output" required spellcheck="false"><button class="icon-button ghost" id="choose-default" type="button" aria-label="Choose default folder"><svg aria-hidden="true"><use href="#folder"/></svg></button></div></div>
           <div class="control-grid"><label class="field">Format<select id="default-format"></select></label><label class="field">Newest messages per channel<input id="default-limit" type="number" min="0" max="10000000" placeholder="All matches"></label></div>
           <div class="control-grid"><label class="field">File cap (MiB)<input id="file-cap" type="number" min="1" max="1024" required></label><label class="field">Job cap (MiB)<input id="job-cap" type="number" min="1" max="16384" required></label></div>
+          <label class="check-line"><input type="checkbox" id="default-embeds" checked> Download embeds by default</label>
           <label class="check-line"><input type="checkbox" id="default-attachments"> Download attachments by default</label>
           <label class="check-line"><input type="checkbox" id="show-preview"> Enable message preview</label>
           <div class="action-row"><button type="submit" class="primary">Save defaults</button></div>

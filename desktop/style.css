@@ -462,21 +462,7 @@ legend {
   margin-top:7px;
 }
 
-.attachment-line {
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:8px;
-  margin:10px 0;
-  font-size:13px;
-}
-
-.attachment-line span {
-  color:var(--muted);
-  font-size:12px;
-}
-
-.attachment-line label,.check-line {
+.check-line {
   display:flex;
   align-items:center;
   gap:6px;

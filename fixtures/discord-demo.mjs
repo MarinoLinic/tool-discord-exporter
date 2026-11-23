@@ -35,7 +35,13 @@ const fixtures = new Map(channels.map((channel, i) => [channel.id, sample[i][1].
     id: demoAttachmentId, filename: 'Harbor Survey.png', size: 18000,
     url: 'https://cdn.discordapp.com/attachments/1200000000000000010/1200000000000000999/Harbor-Survey.png',
     content_type: 'image/png', description: 'Fictional survey sketch',
-  }] : [], embeds: [], type: 0,
+  }] : [], embeds: i === 0 && j === 0 ? [{
+    type: 'video', title: 'Reading a Harbor Survey',
+    description: 'A short guide to comparing titles, scale marks, and dates on old survey sheets.',
+    url: 'https://www.youtube.com/watch?v=FieldNotes1', provider: { name: 'YouTube' },
+    thumbnail: { url: 'https://i.ytimg.com/vi/FieldNotes1/hqdefault.jpg' },
+    video: { url: 'https://www.youtube.com/embed/FieldNotes1' },
+  }] : [], type: 0,
 })).reverse()]));
 
 export function demoSource() {
@@ -58,6 +64,8 @@ export function demoSource() {
   };
 }
 
-export function attachmentFixture(id) {
-  return id === demoAttachmentId ? new URL('./harbor-survey.png', import.meta.url) : null;
+export function attachmentFixture(id, url) {
+  if (id === demoAttachmentId || url === 'https://i.ytimg.com/vi/FieldNotes1/hqdefault.jpg')
+    return new URL('./harbor-survey.png', import.meta.url);
+  return null;
 }
