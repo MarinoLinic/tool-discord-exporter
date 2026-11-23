@@ -45,7 +45,10 @@
       <div class="work-grid">
         <section class="panel channel-panel">
           <div class="panel-title"><h2>Channels</h2><span class="count" id="selection-count">0 selected</span></div>
-          <label class="field">Server<select id="guild" aria-label="Server"></select></label>
+          <div class="connection-grid">
+            <label class="field">Bot profile<select id="profile" aria-label="Bot profile"></select></label>
+            <label class="field">Server<select id="guild" aria-label="Server"></select></label>
+          </div>
           <div class="catalog-tools">
             <label class="finder"><svg aria-hidden="true"><use href="#search"/></svg><input id="channel-search" type="search" aria-label="Find channels" placeholder="Search channels, threads, or categories"></label>
             <label class="field scope-input"><span class="sr-only">Show channels or threads</span><select id="channel-scope"><option value="all">All items</option><option value="channels">Channels</option><option value="threads">Threads</option></select></label>
@@ -77,15 +80,32 @@
       </div>
     </section>
     <section data-page="settings" hidden>
-      <header class="page-title"><div><h1>Settings</h1><p>Manage the bot connection and defaults shared by the desktop app and CLI.</p></div></header>
+      <header class="page-title"><div><h1>Settings</h1><p>Manage Discord bot profiles and export defaults shared by the desktop app and CLI.</p></div></header>
       <div class="settings-grid">
         <section class="panel">
-          <div class="panel-title"><h2>Discord connection</h2><span id="credential-badge" class="count"></span></div>
-          <p class="section-intro">Use a bot installed in the server with View Channel and Read Message History. Enable Message Content in the Discord Developer Portal to export text and attachments.</p>
-          <form id="token-form"><label class="field">Bot token<input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="Paste a new bot token" required></label><div class="action-row"><button class="primary" type="submit">Save token</button><button class="ghost" id="check-token" type="button">Test connection</button></div></form>
-          <div class="action-row credential-actions"><button id="reveal-token" class="text-button" type="button">Reveal saved token</button><button id="clear-token" class="text-button" type="button">Clear saved token</button></div>
-          <input id="revealed" type="text" aria-label="Saved Discord bot token" readonly hidden>
-          <p id="credential-source" class="field-note"></p>
+          <div class="panel-title"><h2>Bot profiles</h2><span id="credential-badge" class="count"></span></div>
+          <form id="token-form">
+            <label class="field">Add bot tokens<textarea id="token" rows="3" autocomplete="off" spellcheck="false" placeholder="Paste one token per line" required></textarea></label>
+            <div class="action-row"><button class="primary" type="submit">Import tokens</button><p class="field-note">Discord verifies each bot. Windows encrypts saved tokens.</p></div>
+            <div id="import-results" role="status" hidden></div>
+          </form>
+          <div class="profile-management" id="profile-management" hidden>
+            <label class="field">Manage profile<select id="manage-profile" aria-label="Manage profile"></select></label>
+            <form id="profile-rename" class="field">
+              <label for="profile-name">Profile name</label><div class="input-row"><input id="profile-name" maxlength="60" required><button class="ghost" type="submit">Save name</button></div>
+            </form>
+            <p id="credential-source" class="field-note"></p>
+            <div class="action-row credential-actions">
+              <button class="ghost" id="check-token" type="button">Test connection</button>
+              <button id="reveal-token" class="text-button" type="button" aria-controls="profile-token-form" aria-expanded="false">Reveal token</button>
+              <button id="copy-token" class="text-button" type="button">Copy token</button>
+              <button id="clear-token" class="text-button" type="button">Remove profile</button>
+            </div>
+            <form id="profile-token-form" class="field credential-editor" hidden>
+              <label for="revealed">Saved token</label>
+              <div class="input-row"><input id="revealed" type="text" autocomplete="off" spellcheck="false" required><button class="primary" type="submit" disabled>Save token</button></div>
+            </form>
+          </div>
         </section>
         <form class="panel" id="settings-form">
           <div class="panel-title"><h2>Export defaults</h2></div>
@@ -97,7 +117,7 @@
           <div class="action-row"><button type="submit" class="primary">Save defaults</button></div>
         </form>
       </div>
-      <section class="panel storage"><div class="panel-title"><h2>Local storage</h2></div><p class="section-intro">Your settings, Windows-encrypted token, and recent export receipts are kept here.</p><code id="home"></code></section>
+      <section class="panel storage"><div class="panel-title"><h2>Local storage</h2></div><p class="section-intro">Your settings, encrypted bot profiles, and recent export receipts are kept here.</p><code id="home"></code></section>
     </section>
     <section data-page="automation" hidden>
       <header class="page-title"><div><h1>Automation</h1><p>Run the same workflows in PowerShell, scripts, or an AI agent.</p></div></header>

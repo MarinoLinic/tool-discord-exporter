@@ -10,7 +10,8 @@ process.env.DISCORD_EXPORTER_HOME = join(workspace, 'app');
 process.env.DISCORD_BOT_TOKEN = 'fixture.for.mocked-api';
 const { prepareExport, runExport, runJob } = await import('../core/export.mjs');
 const { jobStatus } = await import('../core/jobs.mjs');
-const { firstDemoChannel, channelId, source } = await import('../core/source.mjs');
+const { channelId } = await import('../core/source.mjs');
+const { firstDemoChannel } = await import('../fixtures/discord-demo.mjs');
 const { defaults, history, saveSettings, settings, saveToken, savedToken, clearToken } = await import('../core/state.mjs');
 after(() => rm(workspace, { recursive: true, force: true }));
 
@@ -71,6 +72,7 @@ test('Discord pagination and retry preserve order, escape HTML and download boun
     assert.equal(url.hostname, 'discord.com');
     assert.match(init.headers.Authorization, /^Bot fixture/);
     assert.equal(init.redirect, 'error');
+    if (url.pathname.endsWith('/users/@me')) return Response.json({ id: guildId, username: 'Test bot', bot: true });
     if (!url.pathname.endsWith('/messages')) return Response.json({ id: firstDemoChannel, guild_id: guildId, name: 'evidence', type: 0 });
     if (fails) { fails = false; return Response.json({ retry_after: 0 }, { status: 429 }); }
     requests++;

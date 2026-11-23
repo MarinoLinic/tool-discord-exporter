@@ -8,8 +8,9 @@ import { formats, Problem, record, settingsValues } from './state.mjs';
 import { jobDirectory, jobId, jobStatus, loadJobFile, lockJob, saveJobFile } from './jobs.mjs';
 import { archiveName, channelStem } from './naming.mjs';
 import { archiveIndex, archiveCss, compactMessage, jsonFields } from './archive.mjs';
-import { channelId, demoAttachmentId, isId, normalizeMessage, source } from './source.mjs';
+import { channelId, isId, normalizeMessage, source } from './source.mjs';
 import { createTranscript } from './formats.mjs';
+import { profileId, profiles } from './profiles.mjs';
 
 const epoch = 1420070400000;
 function dateValue(value, name) {
@@ -45,11 +46,15 @@ export function exportOptions(input, defaults) {
     throw new Problem('INVALID_OPTIONS', 'Search text must be 300 characters or fewer.', 2);
   return { ...config, channels: selected, since, until: until === null ? null : until + 86_400_000,
     contains: contains.trim(), afterId: input.afterId || null, mode: input.mode ?? 'discord', formats: selectedFormats,
-    fields: [...new Set(fields)], guild: input.guild ?? null, catalog: Array.isArray(input.catalog) ? input.catalog : [], name: input.name };
+    fields: [...new Set(fields)], guild: input.guild ?? null, catalog: Array.isArray(input.catalog) ? input.catalog : [], name: input.name,
+    profileId: profileId(input.profileId) };
 }
 
-export async function preview(mode, id, signal) {
-  const provider = await source(mode, signal);
+export async function preview(mode, id, signal, auth = {}) {
+  return await recentMessages(await source(mode, signal, undefined, auth), id);
+}
+
+export async function recentMessages(provider, id) {
   const channel = await provider.channel(channelId(id));
   const rows = await provider.page(channel.id, { limit: 4 });
   return rows.map(row => normalizeMessage(row, channel)).reverse();
@@ -73,7 +78,8 @@ async function attachment(file, folder, counts, options, signal, fetcher) {
   const max = Math.min(options.attachmentMiB * 1048576, options.budgetMiB * 1048576 - counts.bytes);
   const skip = status => { counts.skipped++; return { ...file, status }; };
   if (!options.attachments) return { ...file, status: 'reference' };
-  if (options.mode === 'demo' && file.id !== demoAttachmentId) return skip('sample');
+  const fixture = options.mode === 'demo' ? (await import('../fixtures/discord-demo.mjs')).attachmentFixture(file.id) : null;
+  if (options.mode === 'demo' && !fixture) return skip('sample');
   if (max <= 0 || (Number.isFinite(file.size) && file.size > max)) return skip('size-limit');
   let url;
   try { url = new URL(file.url); } catch { return skip('unsupported-url'); }
@@ -88,8 +94,8 @@ async function attachment(file, folder, counts, options, signal, fetcher) {
   let exceeded = false;
   try {
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(90_000)]);
-    const response = options.mode === 'demo'
-      ? new Response(await readFile(new URL('../fixtures/harbor-survey.png', import.meta.url)))
+    const response = fixture
+      ? new Response(await readFile(fixture))
       : await fetcher(url, { redirect: 'error', signal: requestSignal });
     if (!response.ok || !response.body) {
       await response.body?.cancel();
@@ -124,13 +130,19 @@ const folderNames = { html: 'HTML', json: 'JSON', jsonl: 'JSONL', markdown: 'Mar
 
 export async function prepareExport(input, defaults) {
   const options = exportOptions(input, defaults);
+  const available = options.mode === 'discord' ? await profiles() : [];
+  const profile = options.profileId ? available.find(row => row.id === options.profileId) : available[0];
+  if (options.mode === 'discord' && !profile)
+    throw new Problem('PROFILE_NOT_FOUND', 'Choose a configured Discord bot profile before starting an export.');
+  options.profileId = profile?.id ?? options.profileId;
   const id = jobId();
   const name = archiveName(options.name, id);
   const output = join(options.output, name);
   const exists = await stat(output).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
   if (exists) throw new Problem('OUTPUT_EXISTS', 'An archive already exists at this location. Choose a different folder name.');
   const status = { id, name, state: 'queued', stage: 'prepare', completed: 0, total: options.channels.length, messages: 0, updatedAt: new Date().toISOString(), output };
-  await saveJobFile(id, 'job', { options, id, output, name, startedAt: status.updatedAt,
+  if (profile) status.botProfile = { id: profile.id, name: profile.name };
+  await saveJobFile(id, 'job', { options, id, output, name, startedAt: status.updatedAt, botProfile: status.botProfile,
     selection: { since: input.since || null, until: input.until || null, contains: options.contains || null, afterId: options.afterId, limitPerChannel: options.limit || null } });
   await saveJobFile(id, 'control', { pause: false });
   await saveJobFile(id, 'status', status);
@@ -173,7 +185,8 @@ export async function runJob(id, hooks = {}) {
   }
   try {
     await report({ detail: '', error: null }, true);
-    const provider = await source(options.mode, signal, fetcher);
+    const legacyProfile = process.env.DISCORD_BOT_TOKEN?.trim() ? 'environment' : 'default';
+    const provider = await source(options.mode, signal, fetcher, { profileId: options.profileId ?? legacyProfile });
     const { DatabaseSync } = await import('node:sqlite');
     db = new DatabaseSync(storePath);
     db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
@@ -186,6 +199,13 @@ export async function runJob(id, hooks = {}) {
     );
     const metaGet = db.prepare('SELECT value FROM metadata WHERE key=?');
     const metaSet = db.prepare('INSERT OR REPLACE INTO metadata VALUES (?,?)');
+    if (options.mode === 'discord' && ['default', 'environment'].includes(options.profileId)) {
+      const { id: currentBot } = await provider.identity();
+      const expectedBot = metaGet.get('botId')?.value;
+      if (expectedBot && expectedBot !== currentBot)
+        throw new Problem('PROFILE_CHANGED', 'This job was started by a different bot. Restore that bot token before resuming.');
+      if (!expectedBot) metaSet.run('botId', currentBot);
+    }
     const getCheckpoint = db.prepare('SELECT checkpoint FROM channels WHERE id=?');
     const saveCheckpoint = db.prepare('UPDATE channels SET checkpoint=? WHERE id=?');
     const saveChannel = db.prepare('INSERT OR IGNORE INTO channels VALUES (?,?,?)');
@@ -432,6 +452,7 @@ export async function runJob(id, hooks = {}) {
       schemaVersion: 2, jobId: id, name, source: options.mode, format: options.formats[0], formats: options.formats,
       startedAt, finishedAt: new Date().toISOString(), output, messageCount: messages, selection, guild: catalog.guild,
       jsonFields: options.fields, channels: results, attachments: counts, warnings: [...warnings], inaccessibleChannels: inaccessible,
+      ...(config.botProfile ? { botProfile: config.botProfile } : {}),
     };
     await writeFile(join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
     signal.throwIfAborted();

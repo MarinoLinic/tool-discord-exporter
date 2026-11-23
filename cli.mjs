@@ -2,10 +2,11 @@ import { parseArgs } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { clearToken, credentialStatus, formats, history, home, Problem, saveSettings, saveToken, settings } from './core/state.mjs';
-import { channelId, demoGuild, source } from './core/source.mjs';
+import { channelId, source } from './core/source.mjs';
 import { prepareExport, preview, runExport, runJob } from './core/export.mjs';
 import { jobStatus, launchJob, listJobs, pauseJob, saveJobFile } from './core/jobs.mjs';
 import { jsonFields } from './core/archive.mjs';
+import { importProfiles, maxImportBytes, profiles } from './core/profiles.mjs';
 
 const help = [
   'Discord Exporter 0.2.0',
@@ -27,10 +28,13 @@ const help = [
   '  history                    List up to 100 local export receipts',
   '  config                     Read saved export defaults',
   '  config --file PATH         Apply defaults from a JSON file',
-  '  auth-save                  Read a bot token from redirected stdin',
+  '  profiles                   List saved bot profiles',
+  '  auth-import                Read one or more bot tokens from redirected stdin',
+  '  auth-save                  Set the legacy bot token from redirected stdin',
   '  auth-clear                 Remove the saved Windows credential',
   '',
-  'Source options: --demo for check, guilds, channels, preview or export.',
+  'Source options: --profile ID selects the bot for check, guilds, channels, preview or export.',
+  '                 --demo uses fictional data.',
   'Export options: --format html|jsonl|markdown|json, --output DIRECTORY,',
   '  --since YYYY-MM-DD, --until YYYY-MM-DD, --contains TEXT, --limit COUNT,',
   '  --after-id ID, --attachments, --no-attachments, --attachment-mib N, --budget-mib N.',
@@ -42,10 +46,10 @@ const help = [
 ].join('\n');
 
 const specs = {
-  doctor: [], schema: [], history: [], config: ['file'], 'auth-save': [], 'auth-clear': [],
+  doctor: [], schema: [], history: [], profiles: [], config: ['file'], 'auth-save': [], 'auth-clear': [], 'auth-import': [],
   jobs: [], status: ['job'], pause: ['job'], resume: ['job', 'background', 'quiet'], worker: ['job', 'quiet'],
-  check: ['demo'], guilds: ['demo'], channels: ['demo', 'guild', 'archived'], preview: ['demo', 'channel'],
-  export: ['demo', 'channel', 'guild', 'format', 'output', 'since', 'until', 'contains', 'limit', 'name', 'fields', 'background',
+  check: ['demo', 'profile'], guilds: ['demo', 'profile'], channels: ['demo', 'guild', 'archived', 'profile'], preview: ['demo', 'channel', 'profile'],
+  export: ['demo', 'profile', 'channel', 'guild', 'format', 'output', 'since', 'until', 'contains', 'limit', 'name', 'fields', 'background',
     'after-id', 'attachments', 'no-attachments', 'attachment-mib', 'budget-mib', 'quiet'],
 };
 const typeOf = key => ['demo', 'attachments', 'no-attachments', 'quiet', 'help', 'print-json', 'background', 'archived'].includes(key) ? 'boolean' : 'string';
@@ -80,6 +84,7 @@ async function dispatch(command, flags) {
   };
   if (command === 'doctor') return { node: process.versions.node, platform: process.platform, home, credential: await credentialStatus(), settings: await settings() };
   if (command === 'history') return await history();
+  if (command === 'profiles') return await profiles();
   if (command === 'jobs') return await listJobs();
   if (['status', 'pause', 'resume', 'worker'].includes(command)) {
     if (!flags.job) throw new Problem('INVALID_JOB', 'Provide --job ID.', 2);
@@ -96,27 +101,29 @@ async function dispatch(command, flags) {
     ? await saveSettings({ ...await settings(), ...JSON.parse((await readFile(resolve(flags.file), 'utf8')).replace(/^\uFEFF/, '')) })
     : await settings();
   if (command === 'auth-clear') { await clearToken(); return await credentialStatus(); }
-  if (command === 'auth-save') {
-    if (process.stdin.isTTY) throw new Problem('INVALID_OPTIONS', 'Supply the token through redirected stdin or use Settings.', 2);
-    let token = '';
+  if (command === 'auth-save' || command === 'auth-import') {
+    if (process.stdin.isTTY) throw new Problem('INVALID_OPTIONS', 'Supply bot tokens through redirected stdin or use Settings.', 2);
+    let input = '';
+    const limit = command === 'auth-save' ? 512 : maxImportBytes;
     process.stdin.setEncoding('utf8');
     for await (const chunk of process.stdin) {
-      token += chunk;
-      if (token.length > 512) throw new Problem('INVALID_TOKEN', 'Input exceeded the token size limit.', 2);
+      input += chunk;
+      if (input.length > limit) throw new Problem('INVALID_TOKEN', 'Input exceeded the token size limit.', 2);
     }
-    await saveToken(token.trim());
+    if (command === 'auth-import') return await importProfiles(input, async token => (await source('discord', signal, undefined, { token })).identity());
+    await saveToken(input.trim());
     return await credentialStatus();
   }
   if (command === 'preview') {
     if (flags.channel?.length !== 1) throw new Problem('INVALID_CHANNEL', 'Preview requires exactly one --channel.', 2);
-    return await preview(mode, channelId(flags.channel[0]), signal);
+    return await preview(mode, channelId(flags.channel[0]), signal, { profileId: flags.profile });
   }
   if (command === 'export') {
     const config = await settings();
     if (flags.attachments && flags['no-attachments'])
       throw new Problem('INVALID_OPTIONS', 'Choose only one attachment mode.', 2);
     const options = {
-      channels: flags.channel, guild: flags.guild, mode, name: flags.name,
+      channels: flags.channel, guild: flags.guild, mode, name: flags.name, profileId: flags.profile,
       format: flags.format?.[0] ?? config.format, formats: flags.format,
       fields: flags.fields === undefined ? undefined : flags.fields.split(',').map(value => value.trim()).filter(Boolean),
       output: flags.output ? resolve(flags.output) : config.output,
@@ -129,12 +136,13 @@ async function dispatch(command, flags) {
     if (flags.background) return await launchJob((await prepareExport(options, config)).id);
     return await runExport(options, config, { signal, progress: flags.quiet ? undefined : showProgress });
   }
-  const provider = await source(mode, signal);
+  const provider = await source(mode, signal, undefined, { profileId: flags.profile });
   if (command === 'check') return await provider.identity();
   if (command === 'guilds') return await provider.guilds();
   if (command === 'channels') {
     if (!flags.guild && !flags.demo) throw new Problem('INVALID_OPTIONS', 'Provide --guild ID.', 2);
-    return flags.archived ? await provider.catalog(flags.guild ?? demoGuild, { archived: true }) : await provider.channels(flags.guild ?? demoGuild);
+    const guild = flags.guild ?? (await import('./fixtures/discord-demo.mjs')).demoGuild;
+    return flags.archived ? await provider.catalog(guild, { archived: true }) : await provider.channels(guild);
   }
 }
 

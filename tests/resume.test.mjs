@@ -21,8 +21,10 @@ test('a paused export resumes after the saved page with no duplicate messages', 
     author: { id: guild, username: 'Test author' }, content: 'Example ' + i,
   })).reverse();
   const cursors = [];
+  let currentBot = guild;
   const fetcher = async input => {
     const url = new URL(input);
+    if (url.pathname.endsWith('/users/@me')) return Response.json({ id: currentBot, username: 'Test bot', bot: true });
     if (!url.pathname.endsWith('/messages')) return Response.json({ id: channel, guild_id: guild, name: 'checkpoint', type: 0 });
     const before = url.searchParams.get('before');
     cursors.push(before);
@@ -35,6 +37,11 @@ test('a paused export resumes after the saved page with no duplicate messages', 
   } }), { code: 'PAUSED' });
   assert.equal((await jobStatus(job.id)).state, 'paused');
   assert.equal(cursors.length, 1);
+  assert.equal((await jobStatus(job.id)).botProfile.id, 'environment');
+  currentBot = channel;
+  await assert.rejects(runJob(job.id, { fetcher }), { code: 'PROFILE_CHANGED' });
+  assert.equal(cursors.length, 1);
+  currentBot = guild;
   const manifest = await runJob(job.id, { fetcher });
   assert.equal(manifest.messageCount, 142);
   assert.deepEqual(cursors.slice(1), [rows[99].id]);

@@ -1,7 +1,7 @@
 # Project guidance
 
 - This is a Windows-first, local Discord archive tool. Keep the desktop and CLI on the same `core/` API. The CLI must remain dependency-free on Node 24+ and must work from any working directory.
-- Discord access uses the official bot API. Keep tokens out of repository files, shell arguments, stdout, logs, and screenshots. Default to Windows DPAPI for saved credentials and support an injected process variable.
+- Discord access uses the official bot API. Keep tokens out of repository files, shell arguments, stdout, logs, and screenshots. Default to Windows DPAPI for saved credentials and support an injected process variable. Profile IDs are verified Discord bot IDs or the legacy/environment aliases. New export jobs persist the selected profile. Resuming a job must never silently switch bot accounts.
 - The repository tracks synthetic fixtures only. Store actual exports and settings outside the checkout by default. Do not inspect real archives when testing.
 - Maintain the versioned stdout envelope, JSONL row contract, compact JSON v2 and manifest. Keep IDs as strings and times in UTC. Compact JSON resolves author IDs through `authors.json` and uses bundle-relative media paths.
 - New jobs use private SQLite checkpoints and a sibling staging directory. Detached workers lock their job and publish once complete. Preserve partial state for resume and never overwrite an existing named archive. Query official permissions before a whole-server run and record inaccessible channels, listing warnings, and attachment skips. Escape Discord text and allow offline assets only in transcript embeds.

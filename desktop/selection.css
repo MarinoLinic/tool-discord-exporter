@@ -45,3 +45,29 @@
 }
 
 .archive-name { margin-top: 9px; }
+
+.connection-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+  gap: 10px;
+}
+#token {
+  width: 100%;
+  min-height: 66px;
+  resize: vertical;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  -webkit-text-security: disc;
+}
+#token::placeholder { -webkit-text-security: none; }
+.profile-management { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--soft-line); }
+#profile-rename { margin-top: 9px; }
+#import-results { margin-top: 9px; font-size: 13px; color: var(--muted); }
+#import-results ul { margin: 4px 0 0; padding-left: 18px; }
+#token-form .action-row .field-note { margin: 0; }
+@media (max-width: 550px) { .connection-grid { grid-template-columns: minmax(0, 1fr); } }
+.credential-editor { margin-top: 10px; }

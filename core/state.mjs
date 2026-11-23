@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 export const home = resolve(process.env.DISCORD_EXPORTER_HOME || join(process.env.LOCALAPPDATA || homedir(), 'DiscordExporter'));
 export const formats = ['html', 'jsonl', 'markdown', 'json'];
@@ -25,11 +26,22 @@ export async function readOptional(path) {
   catch (error) { if (error.code !== 'ENOENT') throw error; return null; }
 }
 
-async function atomic(path, content) {
+export async function renameStateFile(temporary, destination) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await rename(temporary, destination); }
+    catch (error) {
+      const sharingViolation = process.platform === 'win32' && ['EPERM', 'EACCES', 'EBUSY'].includes(error.code);
+      if (!sharingViolation || attempt === 6) throw error;
+      await delay(12 * 2 ** attempt);
+    }
+  }
+}
+
+export async function atomic(path, content) {
   await mkdir(home, { recursive: true });
   const temporary = join(home, randomUUID() + '.tmp');
   await writeFile(temporary, content, { flag: 'wx', mode: 0o600 });
-  await rename(temporary, path);
+  await renameStateFile(temporary, path);
 }
 
 export function settingsValues(input) {
@@ -64,7 +76,7 @@ export function validateToken(token) {
   return token.trim();
 }
 
-function protect(input, decrypt = false) {
+export function protect(input, decrypt = false) {
   if (process.platform !== 'win32')
     throw new Problem('UNSUPPORTED', 'Saved credentials require Windows. Set DISCORD_BOT_TOKEN in the process environment.');
   const method = decrypt

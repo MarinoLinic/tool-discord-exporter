@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { home, Problem } from './state.mjs';
+import { home, Problem, renameStateFile } from './state.mjs';
 
 const root = join(home, 'jobs');
 export const jobPattern = /^\d{8}T\d{9}Z-[\da-f]{8}$/;
@@ -20,7 +20,7 @@ export async function saveJobFile(id, file, value) {
   await mkdir(dir, { recursive: true });
   const temporary = join(dir, (file === 'status' ? 'status' : randomUUID()) + '.tmp');
   await writeFile(temporary, JSON.stringify(value) + '\n');
-  await rename(temporary, join(dir, file + '.json'));
+  await renameStateFile(temporary, join(dir, file + '.json'));
 }
 
 export async function loadJobFile(id, file) {
